@@ -992,5 +992,8 @@ config EXT_ANC
 	help
 	 This option enables support for anti-noise cnacellation
 	 on Sensor DSP.
+	 
+config STATE_NOTIFIER
+    bool "State Notifier"
 
 source "drivers/soc/qcom/memshare/Kconfig"
