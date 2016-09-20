@@ -23,6 +23,7 @@
 #include <linux/mmc/host.h>
 #include <linux/sched/rt.h>
 #include "queue.h"
+#include "block.h"
 
 #define MMC_QUEUE_BOUNCESZ	65536
 
@@ -170,7 +171,7 @@ static int mmc_queue_thread(void *d)
 		if (req || mq->mqrq_prev->req) {
 			set_current_state(TASK_RUNNING);
 			cmd_flags = req ? req->cmd_flags : 0;
-			mq->issue_fn(mq, req);
+			mmc_blk_issue_rq(mq, req);
 			cond_resched();
 			if (test_bit(MMC_QUEUE_NEW_REQUEST, &mq->flags)) {
 				clear_bit(MMC_QUEUE_NEW_REQUEST, &mq->flags);
