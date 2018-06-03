@@ -1040,6 +1040,11 @@ int tpm_get_random(u32 chip_num, u8 *out, size_t max)
 			break;
 
 		recd = be32_to_cpu(tpm_cmd.params.getrandom_out.rng_data_len);
+		if (recd > num_bytes) {
+			total = -EFAULT;
+			break;
+		}
+
 		memcpy(dest, tpm_cmd.params.getrandom_out.rng_data, recd);
 
 		dest += recd;
@@ -1127,6 +1132,7 @@ static int __init tpm_init(void)
 
 static void __exit tpm_exit(void)
 {
+	idr_destroy(&dev_nums_idr);
 	class_destroy(tpm_class);
 	unregister_chrdev_region(tpm_devt, TPM_NUM_DEVICES);
 }
