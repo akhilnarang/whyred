@@ -71,8 +71,8 @@ ssize_t send_i2c_cmd_vqe(struct dbmdx_private *p,
 		return 0;
 
 	/* we need additional sleep till system is ready */
-	if ((command == (DBMDX_VQE_SET_SYSTEM_CONFIG_CMD |
-			DBMDX_VQE_SET_SYSTEM_CONFIG_PRIMARY_CFG)))
+	if (command == (DBMDX_VQE_SET_SYSTEM_CONFIG_CMD |
+			DBMDX_VQE_SET_SYSTEM_CONFIG_PRIMARY_CFG))
 		msleep(DBMDX_MSLEEP_I2C_VQE_SYS_CFG_CMD);
 
 	/* read response */
