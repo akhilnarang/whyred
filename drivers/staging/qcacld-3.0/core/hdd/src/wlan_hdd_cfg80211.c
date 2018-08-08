@@ -1584,18 +1584,17 @@ static int __wlan_hdd_cfg80211_do_acs(struct wiphy *wiphy,
 
 	status = wlan_hdd_validate_context(hdd_ctx);
 	if (status)
-		goto out;
+		return status;
 
 	if (cds_is_sub_20_mhz_enabled()) {
 		hdd_err("ACS not supported in sub 20 MHz ch wd.");
-		status = -EINVAL;
-		goto out;
+		return -EINVAL;
 	}
-
-	if (qdf_atomic_inc_return(&hdd_ctx->is_acs_allowed) > 1) {
+	if (qdf_atomic_read(&adapter->sessionCtx.ap.acs_in_progress) > 0) {
 		hdd_err("ACS rejected as previous req already in progress");
-		status = -EINVAL;
-		goto out;
+		return -EINVAL;
+	} else {
+		qdf_atomic_set(&adapter->sessionCtx.ap.acs_in_progress, 1);
 	}
 
 	sap_config = &adapter->sessionCtx.ap.sapConfig;
@@ -1605,13 +1604,11 @@ static int __wlan_hdd_cfg80211_do_acs(struct wiphy *wiphy,
 						wlan_hdd_cfg80211_do_acs_policy);
 	if (status) {
 		hdd_err("Invalid ATTR");
-		qdf_atomic_set(&hdd_ctx->is_acs_allowed, 0);
 		goto out;
 	}
 
 	if (!tb[QCA_WLAN_VENDOR_ATTR_ACS_HW_MODE]) {
 		hdd_err("Attr hw_mode failed");
-		qdf_atomic_set(&hdd_ctx->is_acs_allowed, 0);
 		goto out;
 	}
 	sap_config->acs_cfg.hw_mode = nla_get_u8(
@@ -1682,7 +1679,6 @@ static int __wlan_hdd_cfg80211_do_acs(struct wiphy *wiphy,
 					sizeof(uint8_t) *
 					sap_config->acs_cfg.ch_list_count);
 			if (sap_config->acs_cfg.ch_list == NULL) {
-				qdf_atomic_set(&hdd_ctx->is_acs_allowed, 0);
 				goto out;
 			}
 
@@ -1701,7 +1697,6 @@ static int __wlan_hdd_cfg80211_do_acs(struct wiphy *wiphy,
 			if (sap_config->acs_cfg.ch_list == NULL) {
 				hdd_err("ACS config alloc fail");
 				status = -ENOMEM;
-				qdf_atomic_set(&hdd_ctx->is_acs_allowed, 0);
 				goto out;
 			}
 
@@ -1779,6 +1774,8 @@ out:
 		if (temp_skbuff != NULL)
 			return cfg80211_vendor_cmd_reply(temp_skbuff);
 	}
+
+	qdf_atomic_set(&adapter->sessionCtx.ap.acs_in_progress, 0);
 	wlan_hdd_undo_acs(adapter);
 	clear_bit(ACS_IN_PROGRESS, &hdd_ctx->g_event_flags);
 
@@ -16943,12 +16940,25 @@ static int wlan_hdd_cfg80211_set_ie(hdd_adapter_t *pAdapter, const uint8_t *ie,
 			/* Setting WAPI Mode to ON=1 */
 			pAdapter->wapi_info.nWapiMode = 1;
 			hdd_debug("WAPI MODE IS %u", pAdapter->wapi_info.nWapiMode);
-			tmp = (uint8_t *)ie;
-			tmp = tmp + 4;  /* Skip element Id and Len, Version */
+			/* genie is pointing to data field of WAPI IE's buffer */
+			tmp = (uint8_t *)genie;
+			/* Validate length for Version(2 bytes) and Number
+			 * of AKM suite (2 bytes) in WAPI IE buffer, coming from
+			 * supplicant*/
+			if (eLen < 4) {
+				hdd_err("Invalid IE Len: %u", eLen);
+				return -EINVAL;
+			}
+			tmp = tmp + 2;  /* Skip Version */
 			/* Get the number of AKM suite */
 			akmsuiteCount = WPA_GET_LE16(tmp);
 			/* Skip the number of AKM suite */
 			tmp = tmp + 2;
+			/* Validate total length for WAPI IE's buffer */
+			if (eLen < (4 + (akmsuiteCount * sizeof(uint32_t)))) {
+				hdd_err("Invalid IE Len: %u", eLen);
+				return -EINVAL;
+			}
 			/* AKM suite list, each OUI contains 4 bytes */
 			akmlist = (uint32_t *)(tmp);
 			if (akmsuiteCount <= MAX_NUM_AKM_SUITES) {
