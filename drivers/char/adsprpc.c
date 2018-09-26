@@ -1582,11 +1582,9 @@ static void fastrpc_init(struct fastrpc_apps *me)
 		init_completion(&me->channel[i].work);
 		init_completion(&me->channel[i].workport);
 		me->channel[i].sesscount = 0;
-		/* All channels are secure by default except ADSP and CDSP */
+		/* All channels are secure by default except CDSP */
 		me->channel[i].secure = SECURE_CHANNEL;
 	}
-	/* Set ADSP channel to non secure */
-	me->channel[ADSP_DOMAIN_ID].secure = NON_SECURE_CHANNEL;
 	/* Set CDSP channel to non secure */
 	me->channel[CDSP_DOMAIN_ID].secure = NON_SECURE_CHANNEL;
 }
