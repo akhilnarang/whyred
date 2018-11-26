@@ -401,42 +401,33 @@ bool csr_is_bss_id_equal(tHalHandle hHal, tSirBssDescription *pSirBssDesc1,
 	return fEqual;
 }
 
-static bool csr_is_conn_state(tpAniSirGlobal mac_ctx, uint32_t session_id,
-			      eCsrConnectState state)
+bool csr_is_conn_state_connected_ibss(tpAniSirGlobal pMac, uint32_t sessionId)
 {
-	QDF_BUG(session_id < CSR_ROAM_SESSION_MAX);
-	if (session_id >= CSR_ROAM_SESSION_MAX)
-		return false;
-
-	return mac_ctx->roam.roamSession[session_id].connectState == state;
+	return eCSR_ASSOC_STATE_TYPE_IBSS_CONNECTED ==
+		pMac->roam.roamSession[sessionId].connectState;
 }
 
-bool csr_is_conn_state_connected_ibss(tpAniSirGlobal mac_ctx,
-				      uint32_t session_id)
+bool csr_is_conn_state_disconnected_ibss(tpAniSirGlobal pMac,
+					 uint32_t sessionId)
 {
-	return csr_is_conn_state(mac_ctx, session_id,
-				 eCSR_ASSOC_STATE_TYPE_IBSS_CONNECTED);
+	return eCSR_ASSOC_STATE_TYPE_IBSS_DISCONNECTED ==
+		pMac->roam.roamSession[sessionId].connectState;
 }
 
-bool csr_is_conn_state_disconnected_ibss(tpAniSirGlobal mac_ctx,
-					 uint32_t session_id)
+bool csr_is_conn_state_connected_infra(tpAniSirGlobal pMac, uint32_t sessionId)
 {
-	return csr_is_conn_state(mac_ctx, session_id,
-				 eCSR_ASSOC_STATE_TYPE_IBSS_DISCONNECTED);
-}
-
-bool csr_is_conn_state_connected_infra(tpAniSirGlobal mac_ctx,
-				       uint32_t session_id)
-{
-	return csr_is_conn_state(mac_ctx, session_id,
-				 eCSR_ASSOC_STATE_TYPE_INFRA_ASSOCIATED);
+	return eCSR_ASSOC_STATE_TYPE_INFRA_ASSOCIATED ==
+		pMac->roam.roamSession[sessionId].connectState;
 }
 
 bool csr_is_conn_state_connected(tpAniSirGlobal pMac, uint32_t sessionId)
 {
-	return csr_is_conn_state_connected_ibss(pMac, sessionId) ||
-		csr_is_conn_state_connected_infra(pMac, sessionId) ||
-		csr_is_conn_state_connected_wds(pMac, sessionId);
+	if (csr_is_conn_state_connected_ibss(pMac, sessionId)
+	    || csr_is_conn_state_connected_infra(pMac, sessionId)
+	    || csr_is_conn_state_connected_wds(pMac, sessionId))
+		return true;
+	else
+		return false;
 }
 
 bool csr_is_conn_state_infra(tpAniSirGlobal pMac, uint32_t sessionId)
@@ -450,27 +441,25 @@ bool csr_is_conn_state_ibss(tpAniSirGlobal pMac, uint32_t sessionId)
 	       csr_is_conn_state_disconnected_ibss(pMac, sessionId);
 }
 
-bool csr_is_conn_state_connected_wds(tpAniSirGlobal mac_ctx,
-				     uint32_t session_id)
+bool csr_is_conn_state_connected_wds(tpAniSirGlobal pMac, uint32_t sessionId)
 {
-	return csr_is_conn_state(mac_ctx, session_id,
-				 eCSR_ASSOC_STATE_TYPE_WDS_CONNECTED);
+	return eCSR_ASSOC_STATE_TYPE_WDS_CONNECTED ==
+		pMac->roam.roamSession[sessionId].connectState;
 }
 
-bool csr_is_conn_state_connected_infra_ap(tpAniSirGlobal mac_ctx,
-					  uint32_t session_id)
+bool csr_is_conn_state_connected_infra_ap(tpAniSirGlobal pMac,
+					  uint32_t sessionId)
 {
-	return csr_is_conn_state(mac_ctx, session_id,
-				 eCSR_ASSOC_STATE_TYPE_INFRA_CONNECTED) ||
-		csr_is_conn_state(mac_ctx, session_id,
-				  eCSR_ASSOC_STATE_TYPE_INFRA_DISCONNECTED);
+	return (eCSR_ASSOC_STATE_TYPE_INFRA_CONNECTED ==
+		 pMac->roam.roamSession[sessionId].connectState) ||
+	       (eCSR_ASSOC_STATE_TYPE_INFRA_DISCONNECTED ==
+		 pMac->roam.roamSession[sessionId].connectState);
 }
 
-bool csr_is_conn_state_disconnected_wds(tpAniSirGlobal mac_ctx,
-					uint32_t session_id)
+bool csr_is_conn_state_disconnected_wds(tpAniSirGlobal pMac, uint32_t sessionId)
 {
-	return csr_is_conn_state(mac_ctx, session_id,
-				 eCSR_ASSOC_STATE_TYPE_WDS_DISCONNECTED);
+	return eCSR_ASSOC_STATE_TYPE_WDS_DISCONNECTED ==
+		pMac->roam.roamSession[sessionId].connectState;
 }
 
 bool csr_is_conn_state_wds(tpAniSirGlobal pMac, uint32_t sessionId)
