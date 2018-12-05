@@ -791,6 +791,32 @@ int hdd_validate_adapter(hdd_adapter_t *adapter)
 	return 0;
 }
 
+QDF_STATUS __wlan_hdd_validate_mac_address(struct qdf_mac_addr *mac_addr,
+					   const char *func)
+{
+	if (!mac_addr) {
+		hdd_err("Received NULL mac address (via %s)", func);
+		return QDF_STATUS_E_INVAL;
+	}
+
+	if (qdf_is_macaddr_zero(mac_addr)) {
+		hdd_err("MAC is all zero (via %s)", func);
+		return QDF_STATUS_E_INVAL;
+	}
+
+	if (qdf_is_macaddr_broadcast(mac_addr)) {
+		hdd_err("MAC is Broadcast (via %s)", func);
+		return QDF_STATUS_E_INVAL;
+	}
+
+	if (ETHER_IS_MULTICAST(mac_addr->bytes)) {
+		hdd_err("MAC is Multicast (via %s)", func);
+		return QDF_STATUS_E_INVAL;
+	}
+
+	return QDF_STATUS_SUCCESS;
+}
+
 /**
  * wlan_hdd_modules_are_enabled() - Check modules status
  * @hdd_ctx: HDD context pointer
@@ -2314,12 +2340,14 @@ int hdd_wlan_start_modules(hdd_context_t *hdd_ctx, hdd_adapter_t *adapter,
 		hif_ctx = cds_get_context(QDF_MODULE_ID_HIF);
 		if (!hif_ctx) {
 			hdd_err("hif context is null!!");
+			ret = -EINVAL;
 			goto power_down;
 		}
 
 		status = ol_cds_init(qdf_dev, hif_ctx);
 		if (status != QDF_STATUS_SUCCESS) {
 			hdd_err("No Memory to Create BMI Context :%d", status);
+			ret = qdf_status_to_os_return(status);
 			goto hif_close;
 		}
 
@@ -2341,6 +2369,7 @@ int hdd_wlan_start_modules(hdd_context_t *hdd_ctx, hdd_adapter_t *adapter,
 		hdd_ctx->hHal = cds_get_context(QDF_MODULE_ID_SME);
 		if (NULL == hdd_ctx->hHal) {
 			hdd_err("HAL context is null");
+			ret = -EINVAL;
 			goto close;
 		}
 
@@ -2377,6 +2406,7 @@ int hdd_wlan_start_modules(hdd_context_t *hdd_ctx, hdd_adapter_t *adapter,
 		if (reinit) {
 			if (hdd_ipa_uc_ssr_reinit(hdd_ctx)) {
 				hdd_err("HDD IPA UC reinit failed");
+				ret = -EINVAL;
 				goto post_disable;
 			}
 		}
@@ -2396,6 +2426,7 @@ int hdd_wlan_start_modules(hdd_context_t *hdd_ctx, hdd_adapter_t *adapter,
 
 		if (hdd_configure_cds(hdd_ctx, adapter)) {
 			hdd_err("Failed to Enable cds modules");
+			ret = -EINVAL;
 			goto post_disable;
 		}
 
@@ -2407,6 +2438,7 @@ int hdd_wlan_start_modules(hdd_context_t *hdd_ctx, hdd_adapter_t *adapter,
 	default:
 		hdd_err("WLAN start invoked in wrong state! :%d\n",
 				hdd_ctx->driver_status);
+		ret = -EINVAL;
 		goto release_lock;
 	}
 	hdd_ctx->start_modules_in_progress = false;
@@ -2835,20 +2867,10 @@ static int __hdd_set_mac_address(struct net_device *dev, void *addr)
 		return -EINVAL;
 	}
 
-	if (qdf_is_macaddr_zero(&mac_addr)) {
-		hdd_err("MAC is all zero");
+	qdf_ret_status = wlan_hdd_validate_mac_address(&mac_addr);
+	if (QDF_IS_STATUS_ERROR(qdf_ret_status))
 		return -EINVAL;
-	}
 
-	if (qdf_is_macaddr_broadcast(&mac_addr)) {
-		hdd_err("MAC is Broadcast");
-		return -EINVAL;
-	}
-
-	if (ETHER_IS_MULTICAST(psta_mac_addr->sa_data)) {
-		hdd_err("MAC is Multicast");
-		return -EINVAL;
-	}
 	hdd_info("Changing MAC to " MAC_ADDRESS_STR " of the interface %s ",
 		 MAC_ADDR_ARRAY(mac_addr.bytes), dev->name);
 
@@ -4383,11 +4405,13 @@ hdd_adapter_t *hdd_open_adapter(hdd_context_t *hdd_ctx, uint8_t session_type,
 		return NULL;
 	}
 
-	if (macAddr == NULL) {
+	status = wlan_hdd_validate_mac_address((struct qdf_mac_addr *)macAddr);
+	if (QDF_IS_STATUS_ERROR(status)) {
 		/* Not received valid macAddr */
 		hdd_err("Unable to add virtual intf: Not able to get valid mac address");
 		return NULL;
 	}
+
 	status = hdd_check_for_existing_macaddr(hdd_ctx, macAddr);
 	if (QDF_STATUS_E_FAILURE == status) {
 		hdd_err("Duplicate MAC addr: " MAC_ADDRESS_STR
