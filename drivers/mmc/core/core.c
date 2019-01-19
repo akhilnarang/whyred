@@ -3887,7 +3887,7 @@ int mmc_cmdq_erase(struct mmc_cmdq_req *cmdq_req,
 	      struct mmc_card *card, unsigned int from, unsigned int nr,
 	      unsigned int arg)
 {
-	unsigned int rem, to = from + nr;
+	unsigned int to = from + nr;
 	int ret;
 
 	ret = mmc_erase_sanity_check(card, from, nr, arg);
