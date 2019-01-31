@@ -865,13 +865,13 @@ static void sdhci_prepare_data(struct sdhci_host *host, struct mmc_command *cmd)
 	struct mmc_data *data = cmd->data;
 	int ret;
 
-	WARN_ON(host->data);
-
 	if (data || (cmd->flags & MMC_RSP_BUSY))
 		sdhci_set_timeout(host, cmd);
 
 	if (!data)
 		return;
+
+	WARN_ON(host->data);
 
 	/* Sanity checks */
 	BUG_ON(data->blksz * data->blocks > host->mmc->max_req_size);
@@ -2507,7 +2507,7 @@ static int sdhci_execute_tuning(struct mmc_host *mmc, u32 opcode)
 
 		spin_unlock_irqrestore(&host->lock, flags);
 		/* Wait for Buffer Read Ready interrupt */
-		wait_event_interruptible_timeout(host->buf_ready_int,
+		wait_event_timeout(host->buf_ready_int,
 					(host->tuning_done == 1),
 					msecs_to_jiffies(50));
 		spin_lock_irqsave(&host->lock, flags);

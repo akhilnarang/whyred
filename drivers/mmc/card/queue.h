@@ -52,8 +52,6 @@ struct mmc_queue {
 	unsigned long		flags;
 #define MMC_QUEUE_SUSPENDED		0
 #define MMC_QUEUE_NEW_REQUEST		1
-
-	int (*issue_fn)(struct mmc_queue *, struct request *);
 	int (*cmdq_issue_fn)(struct mmc_queue *,
 			     struct request *);
 	void (*cmdq_complete_fn)(struct request *);

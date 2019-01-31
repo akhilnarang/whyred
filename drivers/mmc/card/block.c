@@ -39,6 +39,7 @@
 #include <linux/ioprio.h>
 #include <linux/mmc/ffu.h>
 #include <trace/events/mmc.h>
+#include <linux/idr.h>
 
 #include <linux/mmc/ioctl.h>
 #include <linux/mmc/card.h>
@@ -101,15 +102,14 @@ static int perdev_minors = CONFIG_MMC_BLOCK_MINORS;
 /*
  * We've only got one major, so number of mmcblk devices is
  * limited to (1 << 20) / number of minors per device.  It is also
- * currently limited by the size of the static bitmaps below.
+ * limited by the MAX_DEVICES below.
  */
 static int max_devices;
 
 #define MAX_DEVICES 256
 
-/* TODO: Replace these with struct ida */
-static DECLARE_BITMAP(dev_use, MAX_DEVICES);
-static DECLARE_BITMAP(name_use, MAX_DEVICES);
+static DEFINE_IDA(mmc_blk_ida);
+static DEFINE_SPINLOCK(mmc_blk_lock);
 
 /*
  * There is one mmc_blk_data per slot.
@@ -129,7 +129,6 @@ struct mmc_blk_data {
 	unsigned int	usage;
 	unsigned int	read_only;
 	unsigned int	part_type;
-	unsigned int	name_idx;
 	unsigned int	reset_done;
 #define MMC_BLK_READ		BIT(0)
 #define MMC_BLK_WRITE		BIT(1)
@@ -172,8 +171,6 @@ static inline void mmc_blk_clear_packed(struct mmc_queue_req *mqrq)
 {
 	struct mmc_packed *packed = mqrq->packed;
 
-	BUG_ON(!packed);
-
 	mqrq->cmd_type = MMC_PACKED_NONE;
 	packed->nr_entries = MMC_PACKED_NR_ZERO;
 	packed->idx_failure = MMC_PACKED_NR_IDX;
@@ -210,7 +207,9 @@ static void mmc_blk_put(struct mmc_blk_data *md)
 		int devidx = mmc_get_devidx(md->disk);
 		blk_cleanup_queue(md->queue.queue);
 
-		__clear_bit(devidx, dev_use);
+		spin_lock(&mmc_blk_lock);
+		ida_remove(&mmc_blk_ida, devidx);
+		spin_unlock(&mmc_blk_lock);
 
 		put_disk(md->disk);
 		kfree(md);
@@ -736,7 +735,7 @@ static struct mmc_blk_ioc_data *mmc_blk_ioctl_copy_from_user(
 	struct mmc_blk_ioc_data *idata;
 	int err;
 
-	idata = kzalloc(sizeof(*idata), GFP_KERNEL);
+	idata = kmalloc(sizeof(*idata), GFP_KERNEL);
 	if (!idata) {
 		err = -ENOMEM;
 		goto out;
@@ -753,10 +752,12 @@ static struct mmc_blk_ioc_data *mmc_blk_ioctl_copy_from_user(
 		goto idata_err;
 	}
 
-	if (!idata->buf_bytes)
+	if (!idata->buf_bytes) {
+		idata->buf = NULL;
 		return idata;
+	}
 
-	idata->buf = kzalloc(idata->buf_bytes, GFP_KERNEL);
+	idata->buf = kmalloc(idata->buf_bytes, GFP_KERNEL);
 	if (!idata->buf) {
 		err = -ENOMEM;
 		goto idata_err;
@@ -2295,8 +2296,8 @@ static int mmc_blk_err_check(struct mmc_card *card,
 
 	if (brq->data.error) {
 		if (need_retune && !brq->retune_retry_done) {
-			pr_info("%s: retrying because a re-tune was needed\n",
-				req->rq_disk->disk_name);
+			pr_debug("%s: retrying because a re-tune was needed\n",
+				 req->rq_disk->disk_name);
 			brq->retune_retry_done = 1;
 			return MMC_BLK_RETRY;
 		}
@@ -2340,8 +2341,6 @@ static int mmc_blk_packed_err_check(struct mmc_card *card,
 	struct mmc_packed *packed = mq_rq->packed;
 	int err, check, status;
 	u8 *ext_csd;
-
-	BUG_ON(!packed);
 
 	packed->retries--;
 	check = mmc_blk_err_check(card, areq);
@@ -2746,6 +2745,18 @@ static u8 mmc_blk_prep_packed_list(struct mmc_queue *mq, struct request *req)
 	u8 reqs = 0;
 	struct mmc_wr_pack_stats *stats = &card->wr_pack_stats;
 
+	/*
+	 * We don't need to check packed for any further
+	 * operation of packed stuff as we set MMC_PACKED_NONE
+	 * and return zero for reqs if geting null packed. Also
+	 * we clean the flag of MMC_BLK_PACKED_CMD to avoid doing
+	 * it again when removing blk req.
+	 */
+	if (!mqrq->packed) {
+		md->flags &= (~MMC_BLK_PACKED_CMD);
+		goto no_packed;
+	}
+
 	if (!(md->flags & MMC_BLK_PACKED_CMD))
 		goto no_packed;
 
@@ -2900,8 +2911,6 @@ static void mmc_blk_packed_hdr_wrq_prep(struct mmc_queue_req *mqrq,
 	u8 hdr_blocks;
 	u8 i = 1;
 
-	BUG_ON(!packed);
-
 	mqrq->cmd_type = MMC_PACKED_WRITE;
 	packed->blocks = 0;
 	packed->idx_failure = MMC_PACKED_NR_IDX;
@@ -3019,8 +3028,6 @@ static int mmc_blk_end_packed_req(struct mmc_queue_req *mq_rq)
 	int idx = packed->idx_failure, i = 0;
 	int ret = 0;
 
-	BUG_ON(!packed);
-
 	while (!list_empty(&packed->list)) {
 		prq = list_entry_rq(packed->list.next);
 		if (idx == i) {
@@ -3049,8 +3056,6 @@ static void mmc_blk_abort_packed_req(struct mmc_queue_req *mq_rq)
 	struct request *prq;
 	struct mmc_packed *packed = mq_rq->packed;
 
-	BUG_ON(!packed);
-
 	while (!list_empty(&packed->list)) {
 		prq = list_entry_rq(packed->list.next);
 		list_del_init(&prq->queuelist);
@@ -3066,8 +3071,6 @@ static void mmc_blk_revert_packed_req(struct mmc_queue *mq,
 	struct request *prq;
 	struct request_queue *q = mq->queue;
 	struct mmc_packed *packed = mq_rq->packed;
-
-	BUG_ON(!packed);
 
 	while (!list_empty(&packed->list)) {
 		prq = list_entry_rq(packed->list.prev);
@@ -3721,8 +3724,8 @@ static int mmc_blk_issue_rw_rq(struct mmc_queue *mq, struct request *rqc)
 			 * When 4KB native sector is enabled, only 8 blocks
 			 * multiple read or write is allowed
 			 */
-			if ((brq->data.blocks & 0x07) &&
-			    (card->ext_csd.data_sector_size == 4096)) {
+			if (mmc_large_sector(card) &&
+				!IS_ALIGNED(blk_rq_sectors(rqc), 8)) {
 				pr_err("%s: Transfer size is not 4KB sector size aligned\n",
 					req->rq_disk->disk_name);
 				mq_rq = mq->mqrq_cur;
@@ -4115,7 +4118,7 @@ out:
 	return ret;
 }
 
-static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
+int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 {
 	int ret;
 	struct mmc_blk_data *md = mq->data;
@@ -4210,29 +4213,29 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 	struct mmc_blk_data *md;
 	int devidx, ret;
 
-	devidx = find_first_zero_bit(dev_use, max_devices);
-	if (devidx >= max_devices)
-		return ERR_PTR(-ENOSPC);
-	__set_bit(devidx, dev_use);
+again:
+	if (!ida_pre_get(&mmc_blk_ida, GFP_KERNEL))
+		return ERR_PTR(-ENOMEM);
+
+	spin_lock(&mmc_blk_lock);
+	ret = ida_get_new(&mmc_blk_ida, &devidx);
+	spin_unlock(&mmc_blk_lock);
+
+	if (ret == -EAGAIN)
+		goto again;
+	else if (ret)
+		return ERR_PTR(ret);
+
+	if (devidx >= max_devices) {
+		ret = -ENOSPC;
+		goto out;
+	}
 
 	md = kzalloc(sizeof(struct mmc_blk_data), GFP_KERNEL);
 	if (!md) {
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	/*
-	 * !subname implies we are creating main mmc_blk_data that will be
-	 * associated with mmc_card with dev_set_drvdata. Due to device
-	 * partitions, devidx will not coincide with a per-physical card
-	 * index anymore so we keep track of a name index.
-	 */
-	if (!subname) {
-		md->name_idx = find_first_zero_bit(name_use, max_devices);
-		__set_bit(md->name_idx, name_use);
-	} else
-		md->name_idx = ((struct mmc_blk_data *)
-				dev_to_disk(parent)->private_data)->name_idx;
 
 	md->area_type = area_type;
 
@@ -4256,7 +4259,6 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 	if (ret)
 		goto err_putdisk;
 
-	md->queue.issue_fn = mmc_blk_issue_rq;
 	md->queue.data = md;
 
 	md->disk->major	= MMC_BLOCK_MAJOR;
@@ -4283,7 +4285,7 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 	 */
 
 	snprintf(md->disk->disk_name, sizeof(md->disk->disk_name),
-		 "mmcblk%u%s", md->name_idx, subname ? subname : "");
+		 "mmcblk%u%s", card->host->index, subname ? subname : "");
 
 	if (mmc_card_mmc(card))
 		blk_queue_logical_block_size(md->queue.queue,
@@ -4331,11 +4333,11 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
  err_putdisk:
 	put_disk(md->disk);
  err_kfree:
-	if (!subname)
-		__clear_bit(md->name_idx, name_use);
 	kfree(md);
  out:
-	__clear_bit(devidx, dev_use);
+	spin_lock(&mmc_blk_lock);
+	ida_remove(&mmc_blk_ida, devidx);
+	spin_unlock(&mmc_blk_lock);
 	return ERR_PTR(ret);
 }
 
@@ -4462,7 +4464,6 @@ static void mmc_blk_remove_parts(struct mmc_card *card,
 	struct list_head *pos, *q;
 	struct mmc_blk_data *part_md;
 
-	__clear_bit(md->name_idx, name_use);
 	list_for_each_safe(pos, q, &md->part) {
 		part_md = list_entry(pos, struct mmc_blk_data, part);
 		list_del(pos);
