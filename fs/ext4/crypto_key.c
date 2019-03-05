@@ -15,6 +15,7 @@
 #include <uapi/linux/keyctl.h>
 
 #include "ext4.h"
+#include "ext4_ice.h"
 #include "xattr.h"
 
 static void derive_crypt_complete(struct crypto_async_request *req, int rc)
@@ -173,6 +174,8 @@ void ext4_free_crypt_info(struct ext4_crypt_info *ci)
 	if (!ci)
 		return;
 
+	if (ci->ci_keyring_key)
+		key_put(ci->ci_keyring_key);
 	crypto_free_ablkcipher(ci->ci_ctfm);
 	kmem_cache_free(ext4_crypt_info_cachep, ci);
 }
@@ -194,7 +197,13 @@ void ext4_free_encryption_info(struct inode *inode,
 	ext4_free_crypt_info(ci);
 }
 
-int ext4_get_encryption_info(struct inode *inode)
+static int ext4_default_data_encryption_mode(void)
+{
+	return ext4_is_ice_enabled() ? EXT4_ENCRYPTION_MODE_PRIVATE :
+		EXT4_ENCRYPTION_MODE_AES_256_XTS;
+}
+
+int _ext4_get_encryption_info(struct inode *inode)
 {
 	struct ext4_inode_info *ei = EXT4_I(inode);
 	struct ext4_crypt_info *crypt_info;
@@ -207,16 +216,23 @@ int ext4_get_encryption_info(struct inode *inode)
 	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
 	struct crypto_ablkcipher *ctfm;
 	const char *cipher_str;
-	char raw_key[EXT4_MAX_KEY_SIZE];
-	char mode;
+	int for_fname = 0;
+	int mode;
 	int res;
-
-	if (ei->i_crypt_info)
-		return 0;
 
 	res = ext4_init_crypto();
 	if (res)
 		return res;
+
+retry:
+	crypt_info = ACCESS_ONCE(ei->i_crypt_info);
+	if (crypt_info) {
+		if (!crypt_info->ci_keyring_key ||
+		    key_validate(crypt_info->ci_keyring_key) == 0)
+			return 0;
+		ext4_free_encryption_info(inode, crypt_info);
+		goto retry;
+	}
 
 	res = ext4_xattr_get(inode, EXT4_XATTR_INDEX_ENCRYPTION,
 				 EXT4_XATTR_NAME_ENCRYPTION_CONTEXT,
@@ -224,7 +240,8 @@ int ext4_get_encryption_info(struct inode *inode)
 	if (res < 0) {
 		if (!DUMMY_ENCRYPTION_ENABLED(sbi))
 			return res;
-		ctx.contents_encryption_mode = EXT4_ENCRYPTION_MODE_AES_256_XTS;
+		ctx.contents_encryption_mode =
+			ext4_default_data_encryption_mode();
 		ctx.filenames_encryption_mode =
 			EXT4_ENCRYPTION_MODE_AES_256_CTS;
 		ctx.flags = 0;
@@ -240,14 +257,15 @@ int ext4_get_encryption_info(struct inode *inode)
 	crypt_info->ci_data_mode = ctx.contents_encryption_mode;
 	crypt_info->ci_filename_mode = ctx.filenames_encryption_mode;
 	crypt_info->ci_ctfm = NULL;
+	crypt_info->ci_keyring_key = NULL;
 	memcpy(crypt_info->ci_master_key, ctx.master_key_descriptor,
 	       sizeof(crypt_info->ci_master_key));
-	if (S_ISREG(inode->i_mode))
-		mode = crypt_info->ci_data_mode;
-	else if (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode))
-		mode = crypt_info->ci_filename_mode;
-	else
+	if (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode))
+		for_fname = 1;
+	else if (!S_ISREG(inode->i_mode))
 		BUG();
+	mode = for_fname ? crypt_info->ci_filename_mode :
+		crypt_info->ci_data_mode;
 	switch (mode) {
 	case EXT4_ENCRYPTION_MODE_AES_256_XTS:
 		cipher_str = "xts(aes)";
@@ -255,6 +273,8 @@ int ext4_get_encryption_info(struct inode *inode)
 	case EXT4_ENCRYPTION_MODE_AES_256_CTS:
 		cipher_str = "cts(cbc(aes))";
 		break;
+	case EXT4_ENCRYPTION_MODE_PRIVATE:
+		cipher_str = "bugon";
 	case EXT4_ENCRYPTION_MODE_AES_256_HEH:
 		cipher_str = "heh(aes)";
 		break;
@@ -266,7 +286,7 @@ int ext4_get_encryption_info(struct inode *inode)
 		goto out;
 	}
 	if (DUMMY_ENCRYPTION_ENABLED(sbi)) {
-		memset(raw_key, 0x42, EXT4_AES_256_XTS_KEY_SIZE);
+		memset(crypt_info->ci_raw_key, 0x42, EXT4_AES_256_XTS_KEY_SIZE);
 		goto got_key;
 	}
 	memcpy(full_key_descriptor, EXT4_KEY_DESC_PREFIX,
@@ -282,6 +302,7 @@ int ext4_get_encryption_info(struct inode *inode)
 		keyring_key = NULL;
 		goto out;
 	}
+	crypt_info->ci_keyring_key = keyring_key;
 	if (keyring_key->type != &key_type_logon) {
 		printk_once(KERN_WARNING
 			    "ext4: key type must be logon\n");
@@ -312,36 +333,49 @@ int ext4_get_encryption_info(struct inode *inode)
 		up_read(&keyring_key->sem);
 		goto out;
 	}
-	res = ext4_derive_key(&ctx, master_key->raw, raw_key);
+	res = ext4_derive_key(&ctx, master_key->raw,
+				  crypt_info->ci_raw_key);
 	up_read(&keyring_key->sem);
 	if (res)
 		goto out;
 got_key:
-	ctfm = crypto_alloc_ablkcipher(cipher_str, 0, 0);
-	if (!ctfm || IS_ERR(ctfm)) {
-		res = ctfm ? PTR_ERR(ctfm) : -ENOMEM;
-		printk(KERN_DEBUG
-		       "%s: error %d (inode %u) allocating crypto tfm\n",
-		       __func__, res, (unsigned) inode->i_ino);
+	if (for_fname ||
+	    (crypt_info->ci_data_mode != EXT4_ENCRYPTION_MODE_PRIVATE)) {
+		ctfm = crypto_alloc_ablkcipher(cipher_str, 0, 0);
+		if (!ctfm || IS_ERR(ctfm)) {
+			res = ctfm ? PTR_ERR(ctfm) : -ENOMEM;
+			pr_debug("%s: error %d (inode %u) allocating crypto tfm\n",
+				__func__, res, (unsigned) inode->i_ino);
+			goto out;
+		}
+		crypt_info->ci_ctfm = ctfm;
+		crypto_ablkcipher_clear_flags(ctfm, ~0);
+		crypto_tfm_set_flags(crypto_ablkcipher_tfm(ctfm),
+				     CRYPTO_TFM_REQ_WEAK_KEY);
+		res = crypto_ablkcipher_setkey(ctfm, crypt_info->ci_raw_key,
+					       ext4_encryption_key_size(mode));
+		if (res)
+			goto out;
+		memzero_explicit(crypt_info->ci_raw_key,
+			sizeof(crypt_info->ci_raw_key));
+	} else if (!ext4_is_ice_enabled()) {
+		pr_warn("%s: ICE support not available\n",
+		       __func__);
+		res = -EINVAL;
 		goto out;
 	}
-	crypt_info->ci_ctfm = ctfm;
-	crypto_ablkcipher_clear_flags(ctfm, ~0);
-	crypto_tfm_set_flags(crypto_ablkcipher_tfm(ctfm),
-			     CRYPTO_TFM_REQ_WEAK_KEY);
-	res = crypto_ablkcipher_setkey(ctfm, raw_key,
-				       ext4_encryption_key_size(mode));
-	if (res)
-		goto out;
+	if (cmpxchg(&ei->i_crypt_info, NULL, crypt_info) != NULL) {
+		ext4_free_crypt_info(crypt_info);
+		goto retry;
+	}
+	return 0;
 
-	if (cmpxchg(&ei->i_crypt_info, NULL, crypt_info) == NULL)
-		crypt_info = NULL;
 out:
 	if (res == -ENOKEY)
 		res = 0;
-	key_put(keyring_key);
+	memzero_explicit(crypt_info->ci_raw_key,
+		sizeof(crypt_info->ci_raw_key));
 	ext4_free_crypt_info(crypt_info);
-	memzero_explicit(raw_key, sizeof(raw_key));
 	return res;
 }
 

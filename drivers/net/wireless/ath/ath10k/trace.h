@@ -246,6 +246,7 @@ TRACE_EVENT(ath10k_wmi_dbglog,
 	TP_STRUCT__entry(
 		__string(device, dev_name(ar->dev))
 		__string(driver, dev_driver_string(ar->dev))
+		__field(u8, hw_type);
 		__field(size_t, buf_len)
 		__dynamic_array(u8, buf, buf_len)
 	),
@@ -253,14 +254,16 @@ TRACE_EVENT(ath10k_wmi_dbglog,
 	TP_fast_assign(
 		__assign_str(device, dev_name(ar->dev));
 		__assign_str(driver, dev_driver_string(ar->dev));
+		__entry->hw_type = ar->hw_rev;
 		__entry->buf_len = buf_len;
 		memcpy(__get_dynamic_array(buf), buf, buf_len);
 	),
 
 	TP_printk(
-		"%s %s len %zu",
+		"%s %s %d len %zu",
 		__get_str(driver),
 		__get_str(device),
+		__entry->hw_type,
 		__entry->buf_len
 	)
 );
@@ -273,6 +276,7 @@ TRACE_EVENT(ath10k_htt_pktlog,
 	TP_STRUCT__entry(
 		__string(device, dev_name(ar->dev))
 		__string(driver, dev_driver_string(ar->dev))
+		__field(u8, hw_type);
 		__field(u16, buf_len)
 		__dynamic_array(u8, pktlog, buf_len)
 	),
@@ -280,14 +284,16 @@ TRACE_EVENT(ath10k_htt_pktlog,
 	TP_fast_assign(
 		__assign_str(device, dev_name(ar->dev));
 		__assign_str(driver, dev_driver_string(ar->dev));
+		__entry->hw_type = ar->hw_rev;
 		__entry->buf_len = buf_len;
 		memcpy(__get_dynamic_array(pktlog), buf, buf_len);
 	),
 
 	TP_printk(
-		"%s %s size %hu",
+		"%s %s %d size %hu",
 		__get_str(driver),
 		__get_str(device),
+		__entry->hw_type,
 		__entry->buf_len
 	 )
 );
@@ -436,6 +442,7 @@ TRACE_EVENT(ath10k_htt_rx_desc,
 	TP_STRUCT__entry(
 		__string(device, dev_name(ar->dev))
 		__string(driver, dev_driver_string(ar->dev))
+		__field(u8, hw_type);
 		__field(u16, len)
 		__dynamic_array(u8, rxdesc, len)
 	),
@@ -443,14 +450,16 @@ TRACE_EVENT(ath10k_htt_rx_desc,
 	TP_fast_assign(
 		__assign_str(device, dev_name(ar->dev));
 		__assign_str(driver, dev_driver_string(ar->dev));
+		__entry->hw_type = ar->hw_rev;
 		__entry->len = len;
 		memcpy(__get_dynamic_array(rxdesc), data, len);
 	),
 
 	TP_printk(
-		"%s %s rxdesc len %d",
+		"%s %s %d rxdesc len %d",
 		__get_str(driver),
 		__get_str(device),
+		__entry->hw_type,
 		__entry->len
 	 )
 );

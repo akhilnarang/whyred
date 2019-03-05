@@ -13,6 +13,7 @@
 #include <linux/percpu.h>
 #include <linux/kthread.h>
 #include <linux/smpboot.h>
+#include <linux/kmemleak.h>
 
 #include "smpboot.h"
 
@@ -31,7 +32,7 @@ struct task_struct *idle_thread_get(unsigned int cpu)
 
 	if (!tsk)
 		return ERR_PTR(-ENOMEM);
-	init_idle(tsk, cpu);
+	init_idle(tsk, cpu, true);
 	return tsk;
 }
 
@@ -121,7 +122,45 @@ static int smpboot_thread_fn(void *data)
 		}
 
 		if (kthread_should_park()) {
+			/*
+			 * Serialize against wakeup. If we take the lock first,
+			 * wakeup is skipped. If we run later, we observe,
+			 * TASK_RUNNING update from wakeup path, before moving
+			 * forward. This helps avoid the race, where wakeup
+			 * observes TASK_INTERRUPTIBLE, and also observes
+			 * the TASK_PARKED in kthread_parkme() before updating
+			 * task state to TASK_RUNNING. In this case, kthread
+			 * gets parked in TASK_RUNNING state. This results
+			 * in panic later on in kthread_unpark(), as it sees
+			 * KTHREAD_IS_PARKED flag set but fails to rebind the
+			 * kthread, due to it being not in TASK_PARKED state.
+			 *
+			 * Control thread                      Hotplug Thread
+			 *
+			 * kthread_park()
+			 *   set KTHREAD_SHOULD_PARK
+			 *                                smpboot_thread_fn()
+			 *                                  set_current_state(
+			 *                                  TASK_INTERRUPTIBLE);
+			 *                                  kthread_parkme()
+			 *
+			 *   wake_up_process()
+			 *
+			 * raw_spin_lock_irqsave(&p->pi_lock, flags);
+			 * if (!(p->state & state))
+			 *            goto out;
+			 *
+			 *                                  __set_current_state(
+			 *                                  TASK_PARKED);
+			 *
+			 * if (p->on_rq && ttwu_remote(p, wake_flags))
+			 *   ttwu_remote()
+			 *     p->state = TASK_RUNNING;
+			 *                                   schedule();
+			 */
+			raw_spin_lock(&current->pi_lock);
 			__set_current_state(TASK_RUNNING);
+			raw_spin_unlock(&current->pi_lock);
 			preempt_enable();
 			if (ht->park && td->status == HP_THREAD_ACTIVE) {
 				BUG_ON(td->cpu != smp_processor_id());
@@ -177,6 +216,8 @@ __smpboot_create_thread(struct smp_hotplug_thread *ht, unsigned int cpu)
 	td = kzalloc_node(sizeof(*td), GFP_KERNEL, cpu_to_node(cpu));
 	if (!td)
 		return -ENOMEM;
+
+	kmemleak_not_leak(td);
 	td->cpu = cpu;
 	td->ht = ht;
 

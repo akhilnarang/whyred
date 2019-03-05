@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -39,6 +39,13 @@
 #define CORESIGHT_UNLOCK	0xc5acce55
 
 extern struct bus_type coresight_bustype;
+
+enum coresight_clk_rate {
+	CORESIGHT_CLK_RATE_OFF,
+	CORESIGHT_CLK_RATE_TRACE = 1000,
+	CORESIGHT_CLK_RATE_HSTRACE = 2000,
+	CORESIGHT_CLK_RATE_FIXED = 3000,
+};
 
 enum coresight_dev_type {
 	CORESIGHT_DEV_TYPE_NONE,
@@ -94,6 +101,7 @@ struct coresight_dev_subtype {
 		connected  to.
  * @nr_outport:	number of output ports for this component.
  * @clk:	The clock this component is associated to.
+ * @default_sink: Flag to set default sink
  */
 struct coresight_platform_data {
 	int cpu;
@@ -104,6 +112,7 @@ struct coresight_platform_data {
 	int *child_ports;
 	int nr_outport;
 	struct clk *clk;
+	bool default_sink;
 };
 
 /**
@@ -185,10 +194,12 @@ struct coresight_device {
  * Operations available for sinks
  * @enable:	enables the sink.
  * @disable:	disables the sink.
+ * @abort:	captures sink trace on abort
  */
 struct coresight_ops_sink {
 	int (*enable)(struct coresight_device *csdev);
 	void (*disable)(struct coresight_device *csdev);
+	void (*abort)(struct coresight_device *csdev);
 };
 
 /**
@@ -230,6 +241,7 @@ extern int coresight_enable(struct coresight_device *csdev);
 extern void coresight_disable(struct coresight_device *csdev);
 extern int coresight_timeout(void __iomem *addr, u32 offset,
 			     int position, int value);
+extern void coresight_abort(void);
 #else
 static inline struct coresight_device *
 coresight_register(struct coresight_desc *desc) { return NULL; }
@@ -239,13 +251,18 @@ coresight_enable(struct coresight_device *csdev) { return -ENOSYS; }
 static inline void coresight_disable(struct coresight_device *csdev) {}
 static inline int coresight_timeout(void __iomem *addr, u32 offset,
 				     int position, int value) { return 1; }
+static inline void coresight_abort(void) {}
 #endif
 
-#ifdef CONFIG_OF
+#if defined(CONFIG_OF) && defined(CONFIG_CORESIGHT)
 extern struct coresight_platform_data *of_get_coresight_platform_data(
+				struct device *dev, struct device_node *node);
+extern struct coresight_cti_data *of_get_coresight_cti_data(
 				struct device *dev, struct device_node *node);
 #else
 static inline struct coresight_platform_data *of_get_coresight_platform_data(
+	struct device *dev, struct device_node *node) { return NULL; }
+static inline struct coresight_cti_data *of_get_coresight_cti_data(
 	struct device *dev, struct device_node *node) { return NULL; }
 #endif
 

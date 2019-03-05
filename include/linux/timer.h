@@ -21,11 +21,6 @@ struct timer_list {
 	u32			flags;
 	int			slack;
 
-#ifdef CONFIG_TIMER_STATS
-	int			start_pid;
-	void			*start_site;
-	char			start_comm[16];
-#endif
 #ifdef CONFIG_LOCKDEP
 	struct lockdep_map	lockdep_map;
 #endif
@@ -63,6 +58,7 @@ struct timer_list {
 #define TIMER_BASEMASK		(TIMER_CPUMASK | TIMER_MIGRATING)
 #define TIMER_DEFERRABLE	0x00100000
 #define TIMER_IRQSAFE		0x00200000
+#define TIMER_PINNED_ON_CPU	0x00400000
 
 #define __TIMER_INITIALIZER(_function, _expires, _data, _flags) { \
 		.entry = { .next = TIMER_ENTRY_STATIC },	\
@@ -172,6 +168,9 @@ extern int mod_timer_pending(struct timer_list *timer, unsigned long expires);
 extern int mod_timer_pinned(struct timer_list *timer, unsigned long expires);
 
 extern void set_timer_slack(struct timer_list *time, int slack_hz);
+#ifdef CONFIG_SMP
+extern bool check_pending_deferrable_timers(int cpu);
+#endif
 
 #define TIMER_NOT_PINNED	0
 #define TIMER_PINNED		1
@@ -181,45 +180,8 @@ extern void set_timer_slack(struct timer_list *time, int slack_hz);
  */
 #define NEXT_TIMER_MAX_DELTA	((1UL << 30) - 1)
 
-/*
- * Timer-statistics info:
- */
-#ifdef CONFIG_TIMER_STATS
-
-extern int timer_stats_active;
-
-extern void init_timer_stats(void);
-
-extern void timer_stats_update_stats(void *timer, pid_t pid, void *startf,
-				     void *timerf, char *comm, u32 flags);
-
-extern void __timer_stats_timer_set_start_info(struct timer_list *timer,
-					       void *addr);
-
-static inline void timer_stats_timer_set_start_info(struct timer_list *timer)
-{
-	if (likely(!timer_stats_active))
-		return;
-	__timer_stats_timer_set_start_info(timer, __builtin_return_address(0));
-}
-
-static inline void timer_stats_timer_clear_start_info(struct timer_list *timer)
-{
-	timer->start_site = NULL;
-}
-#else
-static inline void init_timer_stats(void)
-{
-}
-
-static inline void timer_stats_timer_set_start_info(struct timer_list *timer)
-{
-}
-
-static inline void timer_stats_timer_clear_start_info(struct timer_list *timer)
-{
-}
-#endif
+/* To be used from cpusets, only */
+extern void timer_quiesce_cpu(void *cpup);
 
 extern void add_timer(struct timer_list *timer);
 
@@ -240,6 +202,8 @@ extern enum hrtimer_restart it_real_fn(struct hrtimer *);
 
 #if defined(CONFIG_SMP) && defined(CONFIG_NO_HZ_COMMON)
 #include <linux/sysctl.h>
+
+extern struct tvec_base tvec_base_deferrable;
 
 extern unsigned int sysctl_timer_migration;
 int timer_migration_handler(struct ctl_table *table, int write,

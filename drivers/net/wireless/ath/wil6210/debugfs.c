@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2015 Qualcomm Atheros, Inc.
+ * Copyright (c) 2012-2017 Qualcomm Atheros, Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -20,7 +20,6 @@
 #include <linux/pci.h>
 #include <linux/rtnetlink.h>
 #include <linux/power_supply.h>
-
 #include "wil6210.h"
 #include "wmi.h"
 #include "txrx.h"
@@ -30,13 +29,13 @@
 static u32 mem_addr;
 static u32 dbg_txdesc_index;
 static u32 dbg_vring_index; /* 24+ for Rx, 0..23 for Tx */
-u32 vring_idle_trsh = 16; /* HW fetches up to 16 descriptors at once */
 
 enum dbg_off_type {
 	doff_u32 = 0,
 	doff_x32 = 1,
 	doff_ulong = 2,
 	doff_io32 = 3,
+	doff_u8 = 4
 };
 
 /* offset to "wil" */
@@ -68,13 +67,13 @@ static void wil_print_vring(struct seq_file *s, struct wil6210_priv *wil,
 		seq_puts(s, "???\n");
 	}
 
-	if (vring->va && (vring->size < 1025)) {
+	if (vring->va && (vring->size <= (1 << WIL_RING_SIZE_ORDER_MAX))) {
 		uint i;
 
 		for (i = 0; i < vring->size; i++) {
 			volatile struct vring_tx_desc *d = &vring->va[i].tx;
 
-			if ((i % 64) == 0 && (i != 0))
+			if ((i % 128) == 0 && (i != 0))
 				seq_puts(s, "\n");
 			seq_printf(s, "%c", (d->dma.status & BIT(0)) ?
 					_s : (vring->ctx[i].skb ? _h : 'h'));
@@ -170,6 +169,8 @@ static void wil_print_ring(struct seq_file *s, const char *prefix,
 	int rsize;
 	uint i;
 
+	wil_halp_vote(wil);
+
 	wil_memcpy_fromio_32(&r, off, sizeof(r));
 	wil_mbox_ring_le2cpus(&r);
 	/*
@@ -235,6 +236,7 @@ static void wil_print_ring(struct seq_file *s, const char *prefix,
 	}
  out:
 	seq_puts(s, "}\n");
+	wil_halp_unvote(wil);
 }
 
 static int wil_mbox_debugfs_show(struct seq_file *s, void *data)
@@ -346,6 +348,10 @@ static void wil6210_debugfs_init_offset(struct wil6210_priv *wil,
 							 tbl[i].mode, dbg,
 							 base + tbl[i].off);
 			break;
+		case doff_u8:
+			f = debugfs_create_u8(tbl[i].name, tbl[i].mode, dbg,
+					      base + tbl[i].off);
+			break;
 		default:
 			f = ERR_PTR(-EINVAL);
 		}
@@ -356,13 +362,13 @@ static void wil6210_debugfs_init_offset(struct wil6210_priv *wil,
 }
 
 static const struct dbg_off isr_off[] = {
-	{"ICC", S_IRUGO | S_IWUSR, offsetof(struct RGF_ICR, ICC), doff_io32},
-	{"ICR", S_IRUGO | S_IWUSR, offsetof(struct RGF_ICR, ICR), doff_io32},
-	{"ICM", S_IRUGO | S_IWUSR, offsetof(struct RGF_ICR, ICM), doff_io32},
-	{"ICS",		  S_IWUSR, offsetof(struct RGF_ICR, ICS), doff_io32},
-	{"IMV", S_IRUGO | S_IWUSR, offsetof(struct RGF_ICR, IMV), doff_io32},
-	{"IMS",		  S_IWUSR, offsetof(struct RGF_ICR, IMS), doff_io32},
-	{"IMC",		  S_IWUSR, offsetof(struct RGF_ICR, IMC), doff_io32},
+	{"ICC", 0644, offsetof(struct RGF_ICR, ICC), doff_io32},
+	{"ICR", 0644, offsetof(struct RGF_ICR, ICR), doff_io32},
+	{"ICM", 0644, offsetof(struct RGF_ICR, ICM), doff_io32},
+	{"ICS",	0244, offsetof(struct RGF_ICR, ICS), doff_io32},
+	{"IMV", 0644, offsetof(struct RGF_ICR, IMV), doff_io32},
+	{"IMS",	0244, offsetof(struct RGF_ICR, IMS), doff_io32},
+	{"IMC",	0244, offsetof(struct RGF_ICR, IMC), doff_io32},
 	{},
 };
 
@@ -382,9 +388,9 @@ static int wil6210_debugfs_create_ISR(struct wil6210_priv *wil,
 }
 
 static const struct dbg_off pseudo_isr_off[] = {
-	{"CAUSE",   S_IRUGO, HOSTADDR(RGF_DMA_PSEUDO_CAUSE), doff_io32},
-	{"MASK_SW", S_IRUGO, HOSTADDR(RGF_DMA_PSEUDO_CAUSE_MASK_SW), doff_io32},
-	{"MASK_FW", S_IRUGO, HOSTADDR(RGF_DMA_PSEUDO_CAUSE_MASK_FW), doff_io32},
+	{"CAUSE",   0444, HOSTADDR(RGF_DMA_PSEUDO_CAUSE), doff_io32},
+	{"MASK_SW", 0444, HOSTADDR(RGF_DMA_PSEUDO_CAUSE_MASK_SW), doff_io32},
+	{"MASK_FW", 0444, HOSTADDR(RGF_DMA_PSEUDO_CAUSE_MASK_FW), doff_io32},
 	{},
 };
 
@@ -403,40 +409,40 @@ static int wil6210_debugfs_create_pseudo_ISR(struct wil6210_priv *wil,
 }
 
 static const struct dbg_off lgc_itr_cnt_off[] = {
-	{"TRSH", S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_CNT_TRSH), doff_io32},
-	{"DATA", S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_CNT_DATA), doff_io32},
-	{"CTL",  S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_CNT_CRL), doff_io32},
+	{"TRSH", 0644, HOSTADDR(RGF_DMA_ITR_CNT_TRSH), doff_io32},
+	{"DATA", 0644, HOSTADDR(RGF_DMA_ITR_CNT_DATA), doff_io32},
+	{"CTL",  0644, HOSTADDR(RGF_DMA_ITR_CNT_CRL), doff_io32},
 	{},
 };
 
 static const struct dbg_off tx_itr_cnt_off[] = {
-	{"TRSH", S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_TX_CNT_TRSH),
+	{"TRSH", 0644, HOSTADDR(RGF_DMA_ITR_TX_CNT_TRSH),
 	 doff_io32},
-	{"DATA", S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_TX_CNT_DATA),
+	{"DATA", 0644, HOSTADDR(RGF_DMA_ITR_TX_CNT_DATA),
 	 doff_io32},
-	{"CTL",  S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_TX_CNT_CTL),
+	{"CTL",  0644, HOSTADDR(RGF_DMA_ITR_TX_CNT_CTL),
 	 doff_io32},
-	{"IDL_TRSH", S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_TX_IDL_CNT_TRSH),
+	{"IDL_TRSH", 0644, HOSTADDR(RGF_DMA_ITR_TX_IDL_CNT_TRSH),
 	 doff_io32},
-	{"IDL_DATA", S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_TX_IDL_CNT_DATA),
+	{"IDL_DATA", 0644, HOSTADDR(RGF_DMA_ITR_TX_IDL_CNT_DATA),
 	 doff_io32},
-	{"IDL_CTL",  S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_TX_IDL_CNT_CTL),
+	{"IDL_CTL",  0644, HOSTADDR(RGF_DMA_ITR_TX_IDL_CNT_CTL),
 	 doff_io32},
 	{},
 };
 
 static const struct dbg_off rx_itr_cnt_off[] = {
-	{"TRSH", S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_RX_CNT_TRSH),
+	{"TRSH", 0644, HOSTADDR(RGF_DMA_ITR_RX_CNT_TRSH),
 	 doff_io32},
-	{"DATA", S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_RX_CNT_DATA),
+	{"DATA", 0644, HOSTADDR(RGF_DMA_ITR_RX_CNT_DATA),
 	 doff_io32},
-	{"CTL",  S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_RX_CNT_CTL),
+	{"CTL",  0644, HOSTADDR(RGF_DMA_ITR_RX_CNT_CTL),
 	 doff_io32},
-	{"IDL_TRSH", S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_RX_IDL_CNT_TRSH),
+	{"IDL_TRSH", 0644, HOSTADDR(RGF_DMA_ITR_RX_IDL_CNT_TRSH),
 	 doff_io32},
-	{"IDL_DATA", S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_RX_IDL_CNT_DATA),
+	{"IDL_DATA", 0644, HOSTADDR(RGF_DMA_ITR_RX_IDL_CNT_DATA),
 	 doff_io32},
-	{"IDL_CTL",  S_IRUGO | S_IWUSR, HOSTADDR(RGF_DMA_ITR_RX_IDL_CNT_CTL),
+	{"IDL_CTL",  0644, HOSTADDR(RGF_DMA_ITR_RX_IDL_CNT_CTL),
 	 doff_io32},
 	{},
 };
@@ -495,11 +501,15 @@ static ssize_t wil_read_file_ioblob(struct file *file, char __user *user_buf,
 				    size_t count, loff_t *ppos)
 {
 	enum { max_count = 4096 };
-	struct debugfs_blob_wrapper *blob = file->private_data;
+	struct wil_blob_wrapper *wil_blob = file->private_data;
 	loff_t pos = *ppos;
-	size_t available = blob->size;
+	size_t available = wil_blob->blob.size;
 	void *buf;
 	size_t ret;
+
+	if (test_bit(wil_status_suspending, wil_blob->wil->status) ||
+	    test_bit(wil_status_suspended, wil_blob->wil->status))
+		return 0;
 
 	if (pos < 0)
 		return -EINVAL;
@@ -516,8 +526,8 @@ static ssize_t wil_read_file_ioblob(struct file *file, char __user *user_buf,
 	if (!buf)
 		return -ENOMEM;
 
-	wil_memcpy_fromio_32(buf, (const volatile void __iomem *)blob->data +
-			     pos, count);
+	wil_memcpy_fromio_32(buf, (const void __iomem *)
+			     wil_blob->blob.data + pos, count);
 
 	ret = copy_to_user(user_buf, buf, count);
 	kfree(buf);
@@ -540,9 +550,9 @@ static
 struct dentry *wil_debugfs_create_ioblob(const char *name,
 					 umode_t mode,
 					 struct dentry *parent,
-					 struct debugfs_blob_wrapper *blob)
+					 struct wil_blob_wrapper *wil_blob)
 {
-	return debugfs_create_file(name, mode, parent, blob, &fops_ioblob);
+	return debugfs_create_file(name, mode, parent, wil_blob, &fops_ioblob);
 }
 
 /*---reset---*/
@@ -793,8 +803,12 @@ static ssize_t wil_write_file_txmgmt(struct file *file, const char __user *buf,
 	struct wireless_dev *wdev = wil_to_wdev(wil);
 	struct cfg80211_mgmt_tx_params params;
 	int rc;
-	void *frame = kmalloc(len, GFP_KERNEL);
+	void *frame;
 
+	if (!len)
+		return -EINVAL;
+
+	frame = kmalloc(len, GFP_KERNEL);
 	if (!frame)
 		return -ENOMEM;
 
@@ -810,7 +824,7 @@ static ssize_t wil_write_file_txmgmt(struct file *file, const char __user *buf,
 	rc = wil_cfg80211_mgmt_tx(wiphy, wdev, &params, NULL);
 
 	kfree(frame);
-	wil_info(wil, "%s() -> %d\n", __func__, rc);
+	wil_info(wil, "-> %d\n", rc);
 
 	return len;
 }
@@ -827,13 +841,13 @@ static ssize_t wil_write_file_wmi(struct file *file, const char __user *buf,
 				  size_t len, loff_t *ppos)
 {
 	struct wil6210_priv *wil = file->private_data;
-	struct wil6210_mbox_hdr_wmi *wmi;
+	struct wmi_cmd_hdr *wmi;
 	void *cmd;
-	int cmdlen = len - sizeof(struct wil6210_mbox_hdr_wmi);
+	int cmdlen = len - sizeof(struct wmi_cmd_hdr);
 	u16 cmdid;
 	int rc, rc1;
 
-	if (cmdlen <= 0)
+	if (cmdlen < 0)
 		return -EINVAL;
 
 	wmi = kmalloc(len, GFP_KERNEL);
@@ -846,13 +860,13 @@ static ssize_t wil_write_file_wmi(struct file *file, const char __user *buf,
 		return rc;
 	}
 
-	cmd = &wmi[1];
-	cmdid = le16_to_cpu(wmi->id);
+	cmd = (cmdlen > 0) ? &wmi[1] : NULL;
+	cmdid = le16_to_cpu(wmi->command_id);
 
 	rc1 = wmi_send(wil, cmdid, cmd, cmdlen);
 	kfree(wmi);
 
-	wil_info(wil, "%s(0x%04x[%d]) -> %d\n", __func__, cmdid, cmdlen, rc1);
+	wil_info(wil, "0x%04x[%d] -> %d\n", cmdid, cmdlen, rc1);
 
 	return rc;
 }
@@ -991,7 +1005,7 @@ static int wil_bf_debugfs_show(struct seq_file *s, void *data)
 		.interval_usec = 0,
 	};
 	struct {
-		struct wil6210_mbox_hdr_wmi wmi;
+		struct wmi_cmd_hdr wmi;
 		struct wmi_notify_req_done_event evt;
 	} __packed reply;
 
@@ -1011,6 +1025,7 @@ static int wil_bf_debugfs_show(struct seq_file *s, void *data)
 			   "  TSF = 0x%016llx\n"
 			   "  TxMCS = %2d TxTpt = %4d\n"
 			   "  SQI = %4d\n"
+			   "  RSSI = %4d\n"
 			   "  Status = 0x%08x %s\n"
 			   "  Sectors(rx:tx) my %2d:%2d peer %2d:%2d\n"
 			   "  Goodput(rx:tx) %4d:%4d\n"
@@ -1020,6 +1035,7 @@ static int wil_bf_debugfs_show(struct seq_file *s, void *data)
 			   le16_to_cpu(reply.evt.bf_mcs),
 			   le32_to_cpu(reply.evt.tx_tpt),
 			   reply.evt.sqi,
+			   reply.evt.rssi,
 			   status, wil_bfstatus_str(status),
 			   le16_to_cpu(reply.evt.my_rx_sector),
 			   le16_to_cpu(reply.evt.my_tx_sector),
@@ -1339,6 +1355,34 @@ static void wil_print_rxtid(struct seq_file *s, struct wil_tid_ampdu_rx *r)
 		   r->ssn_last_drop);
 }
 
+static void wil_print_rxtid_crypto(struct seq_file *s, int tid,
+				   struct wil_tid_crypto_rx *c)
+{
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		struct wil_tid_crypto_rx_single *cc = &c->key_id[i];
+
+		if (cc->key_set)
+			goto has_keys;
+	}
+	return;
+
+has_keys:
+	if (tid < WIL_STA_TID_NUM)
+		seq_printf(s, "  [%2d] PN", tid);
+	else
+		seq_puts(s, "  [GR] PN");
+
+	for (i = 0; i < 4; i++) {
+		struct wil_tid_crypto_rx_single *cc = &c->key_id[i];
+
+		seq_printf(s, " [%i%s]%6phN", i, cc->key_set ? "+" : "-",
+			   cc->pn);
+	}
+	seq_puts(s, "\n");
+}
+
 static int wil_sta_debugfs_show(struct seq_file *s, void *data)
 __acquires(&p->tid_rx_lock) __releases(&p->tid_rx_lock)
 {
@@ -1348,6 +1392,7 @@ __acquires(&p->tid_rx_lock) __releases(&p->tid_rx_lock)
 	for (i = 0; i < ARRAY_SIZE(wil->sta); i++) {
 		struct wil_sta_info *p = &wil->sta[i];
 		char *status = "unknown";
+		u8 aid = 0;
 
 		switch (p->status) {
 		case wil_sta_unused:
@@ -1358,26 +1403,34 @@ __acquires(&p->tid_rx_lock) __releases(&p->tid_rx_lock)
 			break;
 		case wil_sta_connected:
 			status = "connected";
+			aid = p->aid;
 			break;
 		}
-		seq_printf(s, "[%d] %pM %s\n", i, p->addr, status);
+		seq_printf(s, "[%d] %pM %s AID %d\n", i, p->addr, status, aid);
 
 		if (p->status == wil_sta_connected) {
 			spin_lock_bh(&p->tid_rx_lock);
 			for (tid = 0; tid < WIL_STA_TID_NUM; tid++) {
 				struct wil_tid_ampdu_rx *r = p->tid_rx[tid];
+				struct wil_tid_crypto_rx *c =
+						&p->tid_crypto_rx[tid];
 
 				if (r) {
-					seq_printf(s, "[%2d] ", tid);
+					seq_printf(s, "  [%2d] ", tid);
 					wil_print_rxtid(s, r);
 				}
+
+				wil_print_rxtid_crypto(s, tid, c);
 			}
+			wil_print_rxtid_crypto(s, WIL_STA_TID_NUM,
+					       &p->group_crypto_rx);
 			spin_unlock_bh(&p->tid_rx_lock);
 			seq_printf(s,
-				   "Rx invalid frame: non-data %lu, short %lu, large %lu\n",
+				   "Rx invalid frame: non-data %lu, short %lu, large %lu, replay %lu\n",
 				   p->stats.rx_non_data_frame,
 				   p->stats.rx_short_frame,
-				   p->stats.rx_large_frame);
+				   p->stats.rx_large_frame,
+				   p->stats.rx_replay);
 
 			seq_puts(s, "Rx/MCS:");
 			for (mcs = 0; mcs < ARRAY_SIZE(p->stats.rx_per_mcs);
@@ -1403,6 +1456,222 @@ static const struct file_operations fops_sta = {
 	.llseek		= seq_lseek,
 };
 
+static ssize_t wil_read_file_led_cfg(struct file *file, char __user *user_buf,
+				     size_t count, loff_t *ppos)
+{
+	char buf[80];
+	int n;
+
+	n = snprintf(buf, sizeof(buf),
+		     "led_id is set to %d, echo 1 to enable, 0 to disable\n",
+		     led_id);
+
+	n = min_t(int, n, sizeof(buf));
+
+	return simple_read_from_buffer(user_buf, count, ppos,
+				       buf, n);
+}
+
+static ssize_t wil_write_file_led_cfg(struct file *file,
+				      const char __user *buf_,
+				      size_t count, loff_t *ppos)
+{
+	struct wil6210_priv *wil = file->private_data;
+	int val;
+	int rc;
+
+	rc = kstrtoint_from_user(buf_, count, 0, &val);
+	if (rc) {
+		wil_err(wil, "Invalid argument\n");
+		return rc;
+	}
+
+	wil_info(wil, "%s led %d\n", val ? "Enabling" : "Disabling", led_id);
+	rc = wmi_led_cfg(wil, val);
+	if (rc) {
+		wil_info(wil, "%s led %d failed\n",
+			 val ? "Enabling" : "Disabling", led_id);
+		return rc;
+	}
+
+	return count;
+}
+
+static const struct file_operations fops_led_cfg = {
+	.read = wil_read_file_led_cfg,
+	.write = wil_write_file_led_cfg,
+	.open  = simple_open,
+};
+
+/* led_blink_time, write:
+ * "<blink_on_slow> <blink_off_slow> <blink_on_med> <blink_off_med> <blink_on_fast> <blink_off_fast>
+ */
+static ssize_t wil_write_led_blink_time(struct file *file,
+					const char __user *buf,
+					size_t len, loff_t *ppos)
+{
+	int rc;
+	char *kbuf = kmalloc(len + 1, GFP_KERNEL);
+
+	if (!kbuf)
+		return -ENOMEM;
+
+	rc = simple_write_to_buffer(kbuf, len, ppos, buf, len);
+	if (rc != len) {
+		kfree(kbuf);
+		return rc >= 0 ? -EIO : rc;
+	}
+
+	kbuf[len] = '\0';
+	rc = sscanf(kbuf, "%d %d %d %d %d %d",
+		    &led_blink_time[WIL_LED_TIME_SLOW].on_ms,
+		    &led_blink_time[WIL_LED_TIME_SLOW].off_ms,
+		    &led_blink_time[WIL_LED_TIME_MED].on_ms,
+		    &led_blink_time[WIL_LED_TIME_MED].off_ms,
+		    &led_blink_time[WIL_LED_TIME_FAST].on_ms,
+		    &led_blink_time[WIL_LED_TIME_FAST].off_ms);
+	kfree(kbuf);
+
+	if (rc < 0)
+		return rc;
+	if (rc < 6)
+		return -EINVAL;
+
+	return len;
+}
+
+static ssize_t wil_read_led_blink_time(struct file *file, char __user *user_buf,
+				       size_t count, loff_t *ppos)
+{
+	static char text[400];
+
+	snprintf(text, sizeof(text),
+		 "To set led blink on/off time variables write:\n"
+		 "<blink_on_slow> <blink_off_slow> <blink_on_med> "
+		 "<blink_off_med> <blink_on_fast> <blink_off_fast>\n"
+		 "The current values are:\n"
+		 "%d %d %d %d %d %d\n",
+		 led_blink_time[WIL_LED_TIME_SLOW].on_ms,
+		 led_blink_time[WIL_LED_TIME_SLOW].off_ms,
+		 led_blink_time[WIL_LED_TIME_MED].on_ms,
+		 led_blink_time[WIL_LED_TIME_MED].off_ms,
+		 led_blink_time[WIL_LED_TIME_FAST].on_ms,
+		 led_blink_time[WIL_LED_TIME_FAST].off_ms);
+
+	return simple_read_from_buffer(user_buf, count, ppos, text,
+				       sizeof(text));
+}
+
+static const struct file_operations fops_led_blink_time = {
+	.read = wil_read_led_blink_time,
+	.write = wil_write_led_blink_time,
+	.open  = simple_open,
+};
+
+/*---------FW capabilities------------*/
+static int wil_fw_capabilities_debugfs_show(struct seq_file *s, void *data)
+{
+	struct wil6210_priv *wil = s->private;
+
+	seq_printf(s, "fw_capabilities : %*pb\n", WMI_FW_CAPABILITY_MAX,
+		   wil->fw_capabilities);
+
+	return 0;
+}
+
+static int wil_fw_capabilities_seq_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, wil_fw_capabilities_debugfs_show,
+			   inode->i_private);
+}
+
+static const struct file_operations fops_fw_capabilities = {
+	.open		= wil_fw_capabilities_seq_open,
+	.release	= single_release,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+};
+
+/*---------FW version------------*/
+static int wil_fw_version_debugfs_show(struct seq_file *s, void *data)
+{
+	struct wil6210_priv *wil = s->private;
+
+	if (wil->fw_version[0])
+		seq_printf(s, "%s\n", wil->fw_version);
+	else
+		seq_puts(s, "N/A\n");
+
+	return 0;
+}
+
+static int wil_fw_version_seq_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, wil_fw_version_debugfs_show,
+			   inode->i_private);
+}
+
+static const struct file_operations fops_fw_version = {
+	.open		= wil_fw_version_seq_open,
+	.release	= single_release,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+};
+
+/*---------suspend_stats---------*/
+static ssize_t wil_write_suspend_stats(struct file *file,
+				       const char __user *buf,
+				       size_t len, loff_t *ppos)
+{
+	struct wil6210_priv *wil = file->private_data;
+
+	memset(&wil->suspend_stats, 0, sizeof(wil->suspend_stats));
+	wil->suspend_stats.min_suspend_time = ULONG_MAX;
+	wil->suspend_stats.collection_start = ktime_get();
+
+	return len;
+}
+
+static ssize_t wil_read_suspend_stats(struct file *file,
+				      char __user *user_buf,
+				      size_t count, loff_t *ppos)
+{
+	struct wil6210_priv *wil = file->private_data;
+	static char text[400];
+	int n;
+	unsigned long long stats_collection_time =
+		ktime_to_us(ktime_sub(ktime_get(),
+				      wil->suspend_stats.collection_start));
+
+	n = snprintf(text, sizeof(text),
+		     "Suspend statistics:\n"
+		     "successful suspends:%ld failed suspends:%ld\n"
+		     "successful resumes:%ld failed resumes:%ld\n"
+		     "rejected by host:%ld rejected by device:%ld\n"
+		     "total suspend time:%lld min suspend time:%lld\n"
+		     "max suspend time:%lld stats collection time: %lld\n",
+		     wil->suspend_stats.successful_suspends,
+		     wil->suspend_stats.failed_suspends,
+		     wil->suspend_stats.successful_resumes,
+		     wil->suspend_stats.failed_resumes,
+		     wil->suspend_stats.rejected_by_host,
+		     wil->suspend_stats.rejected_by_device,
+		     wil->suspend_stats.total_suspend_time,
+		     wil->suspend_stats.min_suspend_time,
+		     wil->suspend_stats.max_suspend_time,
+		     stats_collection_time);
+
+	n = min_t(int, n, sizeof(text));
+
+	return simple_read_from_buffer(user_buf, count, ppos, text, n);
+}
+
+static const struct file_operations fops_suspend_stats = {
+	.read = wil_read_suspend_stats,
+	.write = wil_write_suspend_stats,
+	.open  = simple_open,
+};
+
 /*----------------*/
 static void wil6210_debugfs_init_blobs(struct wil6210_priv *wil,
 				       struct dentry *dbg)
@@ -1411,16 +1680,18 @@ static void wil6210_debugfs_init_blobs(struct wil6210_priv *wil,
 	char name[32];
 
 	for (i = 0; i < ARRAY_SIZE(fw_mapping); i++) {
-		struct debugfs_blob_wrapper *blob = &wil->blobs[i];
+		struct wil_blob_wrapper *wil_blob = &wil->blobs[i];
+		struct debugfs_blob_wrapper *blob = &wil_blob->blob;
 		const struct fw_map *map = &fw_mapping[i];
 
 		if (!map->name)
 			continue;
 
+		wil_blob->wil = wil;
 		blob->data = (void * __force)wil->csr + HOSTADDR(map->host);
 		blob->size = map->to - map->from;
 		snprintf(name, sizeof(name), "blob_%s", map->name);
-		wil_debugfs_create_ioblob(name, S_IRUGO, dbg, blob);
+		wil_debugfs_create_ioblob(name, 0444, dbg, wil_blob);
 	}
 }
 
@@ -1430,25 +1701,30 @@ static const struct {
 	umode_t mode;
 	const struct file_operations *fops;
 } dbg_files[] = {
-	{"mbox",	S_IRUGO,		&fops_mbox},
-	{"vrings",	S_IRUGO,		&fops_vring},
-	{"stations",	S_IRUGO,		&fops_sta},
-	{"desc",	S_IRUGO,		&fops_txdesc},
-	{"bf",		S_IRUGO,		&fops_bf},
-	{"ssid",	S_IRUGO | S_IWUSR,	&fops_ssid},
-	{"mem_val",	S_IRUGO,		&fops_memread},
-	{"reset",		  S_IWUSR,	&fops_reset},
-	{"rxon",		  S_IWUSR,	&fops_rxon},
-	{"tx_mgmt",		  S_IWUSR,	&fops_txmgmt},
-	{"wmi_send",		  S_IWUSR,	&fops_wmi},
-	{"back",	S_IRUGO | S_IWUSR,	&fops_back},
-	{"pmccfg",	S_IRUGO | S_IWUSR,	&fops_pmccfg},
-	{"pmcdata",	S_IRUGO,		&fops_pmcdata},
-	{"temp",	S_IRUGO,		&fops_temp},
-	{"freq",	S_IRUGO,		&fops_freq},
-	{"link",	S_IRUGO,		&fops_link},
-	{"info",	S_IRUGO,		&fops_info},
-	{"recovery",	S_IRUGO | S_IWUSR,	&fops_recovery},
+	{"mbox",	0444,		&fops_mbox},
+	{"vrings",	0444,		&fops_vring},
+	{"stations", 0444,		&fops_sta},
+	{"desc",	0444,		&fops_txdesc},
+	{"bf",		0444,		&fops_bf},
+	{"ssid",	0644,		&fops_ssid},
+	{"mem_val",	0644,		&fops_memread},
+	{"reset",	0244,		&fops_reset},
+	{"rxon",	0244,		&fops_rxon},
+	{"tx_mgmt",	0244,		&fops_txmgmt},
+	{"wmi_send", 0244,		&fops_wmi},
+	{"back",	0644,		&fops_back},
+	{"pmccfg",	0644,		&fops_pmccfg},
+	{"pmcdata",	0444,		&fops_pmcdata},
+	{"temp",	0444,		&fops_temp},
+	{"freq",	0444,		&fops_freq},
+	{"link",	0444,		&fops_link},
+	{"info",	0444,		&fops_info},
+	{"recovery", 0644,		&fops_recovery},
+	{"led_cfg",	0644,		&fops_led_cfg},
+	{"led_blink_time",	0644,	&fops_led_blink_time},
+	{"fw_capabilities",	0444,	&fops_fw_capabilities},
+	{"fw_version",	0444,		&fops_fw_version},
+	{"suspend_stats",	0644,	&fops_suspend_stats},
 };
 
 static void wil6210_debugfs_init_files(struct wil6210_priv *wil,
@@ -1487,29 +1763,32 @@ static void wil6210_debugfs_init_isr(struct wil6210_priv *wil,
 
 /* fields in struct wil6210_priv */
 static const struct dbg_off dbg_wil_off[] = {
-	WIL_FIELD(privacy,	S_IRUGO,		doff_u32),
-	WIL_FIELD(status[0],	S_IRUGO | S_IWUSR,	doff_ulong),
-	WIL_FIELD(fw_version,	S_IRUGO,		doff_u32),
-	WIL_FIELD(hw_version,	S_IRUGO,		doff_x32),
-	WIL_FIELD(recovery_count, S_IRUGO,		doff_u32),
-	WIL_FIELD(ap_isolate,	S_IRUGO,		doff_u32),
+	WIL_FIELD(privacy,	0444,		doff_u32),
+	WIL_FIELD(status[0],	0644,	doff_ulong),
+	WIL_FIELD(hw_version,	0444,	doff_x32),
+	WIL_FIELD(recovery_count, 0444,	doff_u32),
+	WIL_FIELD(ap_isolate,	0444,	doff_u32),
+	WIL_FIELD(discovery_mode, 0644,	doff_u8),
+	WIL_FIELD(chip_revision, 0444,	doff_u8),
+	WIL_FIELD(abft_len, 0644,		doff_u8),
+	WIL_FIELD(wakeup_trigger, 0644,		doff_u8),
+	WIL_FIELD(vring_idle_trsh, 0644,	doff_u32),
 	{},
 };
 
 static const struct dbg_off dbg_wil_regs[] = {
-	{"RGF_MAC_MTRL_COUNTER_0", S_IRUGO, HOSTADDR(RGF_MAC_MTRL_COUNTER_0),
+	{"RGF_MAC_MTRL_COUNTER_0", 0444, HOSTADDR(RGF_MAC_MTRL_COUNTER_0),
 		doff_io32},
-	{"RGF_USER_USAGE_1", S_IRUGO, HOSTADDR(RGF_USER_USAGE_1), doff_io32},
+	{"RGF_USER_USAGE_1", 0444, HOSTADDR(RGF_USER_USAGE_1), doff_io32},
 	{},
 };
 
 /* static parameters */
 static const struct dbg_off dbg_statics[] = {
-	{"desc_index",	S_IRUGO | S_IWUSR, (ulong)&dbg_txdesc_index, doff_u32},
-	{"vring_index",	S_IRUGO | S_IWUSR, (ulong)&dbg_vring_index, doff_u32},
-	{"mem_addr",	S_IRUGO | S_IWUSR, (ulong)&mem_addr, doff_u32},
-	{"vring_idle_trsh", S_IRUGO | S_IWUSR, (ulong)&vring_idle_trsh,
-	 doff_u32},
+	{"desc_index",	0644, (ulong)&dbg_txdesc_index, doff_u32},
+	{"vring_index",	0644, (ulong)&dbg_vring_index, doff_u32},
+	{"mem_addr",	0644, (ulong)&mem_addr, doff_u32},
+	{"led_polarity", 0644, (ulong)&led_polarity, doff_u8},
 	{},
 };
 
@@ -1534,6 +1813,8 @@ int wil6210_debugfs_init(struct wil6210_priv *wil)
 	wil6210_debugfs_create_pseudo_ISR(wil, dbg);
 
 	wil6210_debugfs_create_ITR_CNT(wil, dbg);
+
+	wil->suspend_stats.collection_start = ktime_get();
 
 	return 0;
 }

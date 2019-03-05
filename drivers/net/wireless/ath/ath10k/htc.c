@@ -44,7 +44,7 @@ static struct sk_buff *ath10k_htc_build_tx_ctrl_skb(void *ar)
 	skb_cb = ATH10K_SKB_CB(skb);
 	memset(skb_cb, 0, sizeof(*skb_cb));
 
-	ath10k_dbg(ar, ATH10K_DBG_HTC, "%s: skb %p\n", __func__, skb);
+	ath10k_dbg(ar, ATH10K_DBG_HTC, "%s: skb %pK\n", __func__, skb);
 	return skb;
 }
 
@@ -62,7 +62,7 @@ static void ath10k_htc_notify_tx_completion(struct ath10k_htc_ep *ep,
 {
 	struct ath10k *ar = ep->htc->ar;
 
-	ath10k_dbg(ar, ATH10K_DBG_HTC, "%s: ep %d skb %p\n", __func__,
+	ath10k_dbg(ar, ATH10K_DBG_HTC, "%s: ep %d skb %pK\n", __func__,
 		   ep->eid, skb);
 
 	ath10k_htc_restore_tx_skb(ep->htc, skb);
@@ -86,7 +86,8 @@ static void ath10k_htc_prepare_tx_skb(struct ath10k_htc_ep *ep,
 	hdr->eid = ep->eid;
 	hdr->len = __cpu_to_le16(skb->len - sizeof(*hdr));
 	hdr->flags = 0;
-	hdr->flags |= ATH10K_HTC_FLAG_NEED_CREDIT_UPDATE;
+	if (ep->tx_credit_flow_enabled)
+		hdr->flags |= ATH10K_HTC_FLAG_NEED_CREDIT_UPDATE;
 
 	spin_lock_bh(&ep->htc->tx_lock);
 	hdr->seq_no = ep->seq_no++;
@@ -404,7 +405,7 @@ void ath10k_htc_rx_completion_handler(struct ath10k *ar, struct sk_buff *skb)
 		goto out;
 	}
 
-	ath10k_dbg(ar, ATH10K_DBG_HTC, "htc rx completion ep %d skb %p\n",
+	ath10k_dbg(ar, ATH10K_DBG_HTC, "htc rx completion ep %d skb %pK\n",
 		   eid, skb);
 	ep->ep_ops.ep_rx_complete(ar, skb);
 
@@ -451,8 +452,16 @@ static const char *htc_service_name(enum ath10k_htc_svc_id id)
 		return "NMI Data";
 	case ATH10K_HTC_SVC_ID_HTT_DATA_MSG:
 		return "HTT Data";
+	case ATH10K_HTC_SVC_ID_HTT_DATA2_MSG:
+		return "HTT Data";
+	case ATH10K_HTC_SVC_ID_HTT_DATA3_MSG:
+		return "HTT Data";
+	case ATH10K_HTC_SVC_ID_HTT_IPA_MSG:
+		return "IPA";
 	case ATH10K_HTC_SVC_ID_TEST_RAW_STREAMS:
 		return "RAW";
+	case ATH10K_HTC_SVC_ID_HTT_LOG_MSG:
+		return "PKTLOG";
 	}
 
 	return "Unknown";

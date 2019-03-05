@@ -514,6 +514,14 @@ int security_inode_create(struct inode *dir, struct dentry *dentry, umode_t mode
 }
 EXPORT_SYMBOL_GPL(security_inode_create);
 
+int security_inode_post_create(struct inode *dir, struct dentry *dentry,
+			       umode_t mode)
+{
+	if (unlikely(IS_PRIVATE(dir)))
+		return 0;
+	return call_int_hook(inode_post_create, 0, dir, dentry, mode);
+}
+
 int security_inode_link(struct dentry *old_dentry, struct inode *dir,
 			 struct dentry *new_dentry)
 {
@@ -1622,6 +1630,7 @@ struct security_hook_heads security_hook_heads = {
 	.inode_init_security =
 		LIST_HEAD_INIT(security_hook_heads.inode_init_security),
 	.inode_create =	LIST_HEAD_INIT(security_hook_heads.inode_create),
+	.inode_post_create = LIST_HEAD_INIT(security_hook_heads.inode_post_create),
 	.inode_link =	LIST_HEAD_INIT(security_hook_heads.inode_link),
 	.inode_unlink =	LIST_HEAD_INIT(security_hook_heads.inode_unlink),
 	.inode_symlink =
@@ -1681,6 +1690,7 @@ struct security_hook_heads security_hook_heads = {
 		LIST_HEAD_INIT(security_hook_heads.file_send_sigiotask),
 	.file_receive =	LIST_HEAD_INIT(security_hook_heads.file_receive),
 	.file_open =	LIST_HEAD_INIT(security_hook_heads.file_open),
+	.file_close = LIST_HEAD_INIT(security_hook_heads.file_close),
 	.task_create =	LIST_HEAD_INIT(security_hook_heads.task_create),
 	.task_free =	LIST_HEAD_INIT(security_hook_heads.task_free),
 	.cred_alloc_blank =

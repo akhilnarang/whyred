@@ -315,7 +315,8 @@ write_tag_66_packet(char *signature, u8 cipher_code,
 	 *         | File Encryption Key Size | 1 or 2 bytes |
 	 *         | File Encryption Key      | arbitrary    |
 	 */
-	data_len = (5 + ECRYPTFS_SIG_SIZE_HEX + crypt_stat->key_size);
+	data_len = (5 + ECRYPTFS_SIG_SIZE_HEX +
+			ecryptfs_get_key_size_to_store_key(crypt_stat));
 	*packet = kmalloc(data_len, GFP_KERNEL);
 	message = *packet;
 	if (!message) {
@@ -335,8 +336,9 @@ write_tag_66_packet(char *signature, u8 cipher_code,
 	memcpy(&message[i], signature, ECRYPTFS_SIG_SIZE_HEX);
 	i += ECRYPTFS_SIG_SIZE_HEX;
 	/* The encrypted key includes 1 byte cipher code and 2 byte checksum */
-	rc = ecryptfs_write_packet_length(&message[i], crypt_stat->key_size + 3,
-					  &packet_size_len);
+	rc = ecryptfs_write_packet_length(&message[i],
+			ecryptfs_get_key_size_to_store_key(crypt_stat) + 3,
+			&packet_size_len);
 	if (rc) {
 		ecryptfs_printk(KERN_ERR, "Error generating tag 66 packet "
 				"header; cannot generate packet length\n");
@@ -344,9 +346,10 @@ write_tag_66_packet(char *signature, u8 cipher_code,
 	}
 	i += packet_size_len;
 	message[i++] = cipher_code;
-	memcpy(&message[i], crypt_stat->key, crypt_stat->key_size);
-	i += crypt_stat->key_size;
-	for (j = 0; j < crypt_stat->key_size; j++)
+	memcpy(&message[i], crypt_stat->key,
+			ecryptfs_get_key_size_to_store_key(crypt_stat));
+	i += ecryptfs_get_key_size_to_store_key(crypt_stat);
+	for (j = 0; j < ecryptfs_get_key_size_to_store_key(crypt_stat); j++)
 		checksum += crypt_stat->key[j];
 	message[i++] = (checksum / 256) % 256;
 	message[i++] = (checksum % 256);
@@ -925,6 +928,7 @@ ecryptfs_parse_tag_70_packet(char **filename, size_t *filename_size,
 	struct ecryptfs_parse_tag_70_packet_silly_stack *s;
 	struct key *auth_tok_key = NULL;
 	int rc = 0;
+	char full_cipher[ECRYPTFS_MAX_CIPHER_NAME_SIZE];
 
 	(*packet_size) = 0;
 	(*filename_size) = 0;
@@ -984,12 +988,13 @@ ecryptfs_parse_tag_70_packet(char **filename, size_t *filename_size,
 	s->fnek_sig_hex[ECRYPTFS_SIG_SIZE_HEX] = '\0';
 	(*packet_size) += ECRYPTFS_SIG_SIZE;
 	s->cipher_code = data[(*packet_size)++];
-	rc = ecryptfs_cipher_code_to_string(s->cipher_string, s->cipher_code);
+	rc = ecryptfs_cipher_code_to_string(full_cipher, s->cipher_code);
 	if (rc) {
 		printk(KERN_WARNING "%s: Cipher code [%d] is invalid\n",
 		       __func__, s->cipher_code);
 		goto out;
 	}
+	ecryptfs_parse_full_cipher(full_cipher, s->cipher_string, 0);
 	rc = ecryptfs_find_auth_tok_for_sig(&auth_tok_key,
 					    &s->auth_tok, mount_crypt_stat,
 					    s->fnek_sig_hex);
@@ -1158,6 +1163,7 @@ decrypt_pki_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
 	char *payload = NULL;
 	size_t payload_len = 0;
 	int rc;
+	char full_cipher[ECRYPTFS_MAX_CIPHER_NAME_SIZE];
 
 	rc = ecryptfs_get_auth_tok_sig(&auth_tok_sig, auth_tok);
 	if (rc) {
@@ -1191,21 +1197,31 @@ decrypt_pki_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
 		       rc);
 		goto out;
 	}
-	auth_tok->session_key.flags |= ECRYPTFS_CONTAINS_DECRYPTED_KEY;
-	memcpy(crypt_stat->key, auth_tok->session_key.decrypted_key,
-	       auth_tok->session_key.decrypted_key_size);
-	crypt_stat->key_size = auth_tok->session_key.decrypted_key_size;
-	rc = ecryptfs_cipher_code_to_string(crypt_stat->cipher, cipher_code);
+
+	rc = ecryptfs_cipher_code_to_string(full_cipher, cipher_code);
 	if (rc) {
 		ecryptfs_printk(KERN_ERR, "Cipher code [%d] is invalid\n",
 				cipher_code)
-		goto out;
+					goto out;
 	}
+
+	auth_tok->session_key.flags |= ECRYPTFS_CONTAINS_DECRYPTED_KEY;
+	memcpy(crypt_stat->key, auth_tok->session_key.decrypted_key,
+	       auth_tok->session_key.decrypted_key_size);
+	crypt_stat->key_size = ecryptfs_get_key_size_to_restore_key(
+			auth_tok->session_key.decrypted_key_size, crypt_stat);
+
+	ecryptfs_parse_full_cipher(full_cipher,
+		crypt_stat->cipher, crypt_stat->cipher_mode);
+
 	crypt_stat->flags |= ECRYPTFS_KEY_VALID;
 	if (ecryptfs_verbosity > 0) {
 		ecryptfs_printk(KERN_DEBUG, "Decrypted session key:\n");
 		ecryptfs_dump_hex(crypt_stat->key,
 				  crypt_stat->key_size);
+
+		ecryptfs_dump_salt_hex(crypt_stat->key, crypt_stat->key_size,
+				crypt_stat);
 	}
 out:
 	kfree(msg);
@@ -1387,6 +1403,7 @@ parse_tag_3_packet(struct ecryptfs_crypt_stat *crypt_stat,
 	struct ecryptfs_auth_tok_list_item *auth_tok_list_item;
 	size_t length_size;
 	int rc = 0;
+	char full_cipher[ECRYPTFS_MAX_CIPHER_NAME_SIZE];
 
 	(*packet_size) = 0;
 	(*new_auth_tok) = NULL;
@@ -1460,10 +1477,13 @@ parse_tag_3_packet(struct ecryptfs_crypt_stat *crypt_stat,
 		rc = -EINVAL;
 		goto out_free;
 	}
-	rc = ecryptfs_cipher_code_to_string(crypt_stat->cipher,
+	rc = ecryptfs_cipher_code_to_string(full_cipher,
 					    (u16)data[(*packet_size)]);
 	if (rc)
 		goto out_free;
+	ecryptfs_parse_full_cipher(full_cipher,
+		crypt_stat->cipher, crypt_stat->cipher_mode);
+
 	/* A little extra work to differentiate among the AES key
 	 * sizes; see RFC2440 */
 	switch(data[(*packet_size)++]) {
@@ -1472,7 +1492,10 @@ parse_tag_3_packet(struct ecryptfs_crypt_stat *crypt_stat,
 		break;
 	default:
 		crypt_stat->key_size =
-			(*new_auth_tok)->session_key.encrypted_key_size;
+			ecryptfs_get_key_size_to_restore_key(
+			(*new_auth_tok)->session_key.encrypted_key_size,
+			crypt_stat);
+
 	}
 	rc = ecryptfs_init_crypt_ctx(crypt_stat);
 	if (rc)
@@ -1720,7 +1743,7 @@ decrypt_passphrase_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
 	mutex_lock(tfm_mutex);
 	rc = crypto_blkcipher_setkey(
 		desc.tfm, auth_tok->token.password.session_key_encryption_key,
-		crypt_stat->key_size);
+		auth_tok->token.password.session_key_encryption_key_bytes);
 	if (unlikely(rc < 0)) {
 		mutex_unlock(tfm_mutex);
 		printk(KERN_ERR "Error setting key for crypto context\n");
@@ -1743,6 +1766,8 @@ decrypt_passphrase_encrypted_session_key(struct ecryptfs_auth_tok *auth_tok,
 				crypt_stat->key_size);
 		ecryptfs_dump_hex(crypt_stat->key,
 				  crypt_stat->key_size);
+		ecryptfs_dump_salt_hex(crypt_stat->key, crypt_stat->key_size,
+				crypt_stat);
 	}
 out:
 	return rc;
@@ -1979,12 +2004,17 @@ pki_encrypt_session_key(struct key *auth_tok_key,
 	size_t payload_len = 0;
 	struct ecryptfs_message *msg;
 	int rc;
+	unsigned char final[2*ECRYPTFS_MAX_CIPHER_NAME_SIZE+1];
 
 	rc = write_tag_66_packet(auth_tok->token.private_key.signature,
-				 ecryptfs_code_for_cipher_string(
-					 crypt_stat->cipher,
-					 crypt_stat->key_size),
-				 crypt_stat, &payload, &payload_len);
+			ecryptfs_code_for_cipher_string(
+					ecryptfs_get_full_cipher(
+						crypt_stat->cipher,
+						crypt_stat->cipher_mode,
+						final, sizeof(final)),
+					ecryptfs_get_key_size_to_enc_data(
+						crypt_stat)),
+					crypt_stat, &payload, &payload_len);
 	up_write(&(auth_tok_key->sem));
 	key_put(auth_tok_key);
 	if (rc) {
@@ -2042,7 +2072,7 @@ write_tag_1_packet(char *dest, size_t *remaining_bytes,
 	ecryptfs_from_hex(key_rec->sig, auth_tok->token.private_key.signature,
 			  ECRYPTFS_SIG_SIZE);
 	encrypted_session_key_valid = 0;
-	for (i = 0; i < crypt_stat->key_size; i++)
+	for (i = 0; i < ecryptfs_get_key_size_to_store_key(crypt_stat); i++)
 		encrypted_session_key_valid |=
 			auth_tok->session_key.encrypted_key[i];
 	if (encrypted_session_key_valid) {
@@ -2196,6 +2226,7 @@ write_tag_3_packet(char *dest, size_t *remaining_bytes,
 	u8 cipher_code;
 	size_t packet_size_length;
 	size_t max_packet_size;
+	unsigned char final[2*ECRYPTFS_MAX_CIPHER_NAME_SIZE+1];
 	struct ecryptfs_mount_crypt_stat *mount_crypt_stat =
 		crypt_stat->mount_crypt_stat;
 	struct blkcipher_desc desc = {
@@ -2228,13 +2259,14 @@ write_tag_3_packet(char *dest, size_t *remaining_bytes,
 			mount_crypt_stat->global_default_cipher_key_size;
 	if (auth_tok->session_key.encrypted_key_size == 0)
 		auth_tok->session_key.encrypted_key_size =
-			crypt_stat->key_size;
+			ecryptfs_get_key_size_to_store_key(crypt_stat);
 	if (crypt_stat->key_size == 24
 	    && strcmp("aes", crypt_stat->cipher) == 0) {
 		memset((crypt_stat->key + 24), 0, 8);
 		auth_tok->session_key.encrypted_key_size = 32;
 	} else
-		auth_tok->session_key.encrypted_key_size = crypt_stat->key_size;
+		auth_tok->session_key.encrypted_key_size =
+				ecryptfs_get_key_size_to_store_key(crypt_stat);
 	key_rec->enc_key_size =
 		auth_tok->session_key.encrypted_key_size;
 	encrypted_session_key_valid = 0;
@@ -2258,8 +2290,8 @@ write_tag_3_packet(char *dest, size_t *remaining_bytes,
 				auth_tok->token.password.
 				session_key_encryption_key_bytes);
 		memcpy(session_key_encryption_key,
-		       auth_tok->token.password.session_key_encryption_key,
-		       crypt_stat->key_size);
+		auth_tok->token.password.session_key_encryption_key,
+		auth_tok->token.password.session_key_encryption_key_bytes);
 		ecryptfs_printk(KERN_DEBUG,
 				"Cached session key encryption key:\n");
 		if (ecryptfs_verbosity > 0)
@@ -2292,7 +2324,7 @@ write_tag_3_packet(char *dest, size_t *remaining_bytes,
 	}
 	mutex_lock(tfm_mutex);
 	rc = crypto_blkcipher_setkey(desc.tfm, session_key_encryption_key,
-				     crypt_stat->key_size);
+		auth_tok->token.password.session_key_encryption_key_bytes);
 	if (rc < 0) {
 		mutex_unlock(tfm_mutex);
 		ecryptfs_printk(KERN_ERR, "Error setting key for crypto "
@@ -2301,7 +2333,9 @@ write_tag_3_packet(char *dest, size_t *remaining_bytes,
 	}
 	rc = 0;
 	ecryptfs_printk(KERN_DEBUG, "Encrypting [%zd] bytes of the key\n",
-			crypt_stat->key_size);
+		crypt_stat->key_size);
+	ecryptfs_printk(KERN_DEBUG, "Encrypting [%zd] bytes of the salt key\n",
+		ecryptfs_get_salt_size_for_cipher(crypt_stat));
 	rc = crypto_blkcipher_encrypt(&desc, dst_sg, src_sg,
 				      (*key_rec).enc_key_size);
 	mutex_unlock(tfm_mutex);
@@ -2350,8 +2384,10 @@ encrypted_session_key_set:
 	dest[(*packet_size)++] = 0x04; /* version 4 */
 	/* TODO: Break from RFC2440 so that arbitrary ciphers can be
 	 * specified with strings */
-	cipher_code = ecryptfs_code_for_cipher_string(crypt_stat->cipher,
-						      crypt_stat->key_size);
+	cipher_code = ecryptfs_code_for_cipher_string(
+			ecryptfs_get_full_cipher(crypt_stat->cipher,
+				crypt_stat->cipher_mode, final, sizeof(final)),
+			crypt_stat->key_size);
 	if (cipher_code == 0) {
 		ecryptfs_printk(KERN_WARNING, "Unable to generate code for "
 				"cipher [%s]\n", crypt_stat->cipher);

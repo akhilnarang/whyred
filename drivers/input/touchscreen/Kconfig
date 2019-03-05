@@ -11,7 +11,9 @@ menuconfig INPUT_TOUCHSCREEN
 
 if INPUT_TOUCHSCREEN
 
-config TOUCHSCREEN_PROPERTIES
+source "drivers/input/touchscreen/synaptics_dsx/Kconfig"
+
+config OF_TOUCHSCREEN
 	def_tristate INPUT
 	depends on INPUT
 
@@ -114,6 +116,18 @@ config TOUCHSCREEN_ATMEL_MXT
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called atmel_mxt_ts.
+
+config TOUCHSCREEN_ATMEL_MAXTOUCH_TS
+	tristate "Atmel Maxtouch Touchscreen Family"
+	depends on I2C
+	help
+	  Say Y here if you have Atmel MaXTouch Touchscreen
+	  using i2c connected to your system.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called atmel_maxtouch_ts.
 
 config TOUCHSCREEN_AUO_PIXCIR
 	tristate "AUO in-cell touchscreen using Pixcir ICs"
@@ -1095,6 +1109,58 @@ config TOUCHSCREEN_COLIBRI_VF50
 	  To compile this driver as a module, choose M here: the
 	  module will be called colibri_vf50_ts.
 
+config TOUCHSCREEN_FT5X06_PSENSOR
+       tristate "FocalTech proximity feature support"
+       depends on TOUCHSCREEN_FT5X06 && SENSORS
+       help
+         Say Y here if you want to support ft5x06's proximity
+         feature.
+
+         If unsure, say N.
+
+config TOUCHSCREEN_FT5X06_GESTURE
+       tristate "FocalTech gesture feature support"
+       depends on TOUCHSCREEN_FT5X06
+       help
+         Say Y here if you want to support ft5x06's gesture
+         feature.
+
+         If unsure, say N.
+
+config TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE_EXTRA_SYSFS
+	bool "Synaptics DSX firmware update extra sysfs attributes"
+	depends on TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE
+	help
+	  Say Y here to enable support for extra sysfs attributes
+	  supporting firmware update in a development environment.
+	  This does not affect the core or other subsystem attributes.
+
+	  If unsure, say N.
+
+config TOUCHSCREEN_NVT
+	tristate "novatek touchscreens"
+	help
+	  Say Y here if you have a nvt touchscreen.
+	  nvt controllers are multi touch controllers which can
+	  report 5 touches at a time.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called nvt.
+
+config TOUCHSCREEN_NVT_WAYNE
+	tristate "novatek touchscreens"
+	help
+	  Say Y here if you have a nvt touchscreen.
+	  nvt controllers are multi touch controllers which can
+	  report 5 touches at a time.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called nvt.
+
 config TOUCHSCREEN_ROHM_BU21023
 	tristate "ROHM BU21023/24 Dual touch support resistive touchscreens"
 	depends on I2C
@@ -1105,5 +1171,82 @@ config TOUCHSCREEN_ROHM_BU21023
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called bu21023_ts.
+
+config TOUCHSCREEN_MAXIM_STI
+	tristate "Maxim based STI touchscreens"
+	depends on SPI_MASTER
+	help
+	  Say Y here if you have a touchscreen interface using the
+	  Maxim STI based touch controller.
+
+	  If unsure, say N
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called maxim_sti.
+
+config SECURE_TOUCH
+	bool "Secure Touch"
+	depends on (TOUCHSCREEN_SYNAPTICS_I2C_RMI4 || \
+	  TOUCHSCREEN_SYNAPTICS_DSX_I2C_v21)
+	help
+	  Say Y here to enable Secure Touch in supported drivers.
+
+	  If unsure, say N.
+
+config TOUCHSCREEN_GEN_VKEYS
+       tristate "Touchscreen Virtual Keys Driver"
+       help
+         Say Y here if you want to generate a sysfs entry for virtual
+	 keys on Android.
+
+         If unsure, say N.
+
+         To compile this driver as a module, choose M here: the
+         module will be called gen_vkeys.
+
+config TOUCHSCREEN_FT5X06
+       tristate "FocalTech touchscreens"
+       depends on I2C
+       help
+         Say Y here if you have a ft5X06 touchscreen.
+	 Ft5x06 controllers are multi touch controllers which can
+	 report 5 touches at a time.
+
+         If unsure, say N.
+
+         To compile this driver as a module, choose M here: the
+         module will be called ft5x06_ts.
+
+config FT_SECURE_TOUCH
+	bool "Secure Touch support for Focaltech Touchscreen"
+	depends on TOUCHSCREEN_FT5X06
+	help
+	  Say Y here
+	  -Focaltech touch driver is connected
+	  -To enable secure touch for Focaltech touch driver
+
+	  If unsure, say N.
+
+config TOUCHSCREEN_IT7260_I2C
+	tristate "IT7260 Touchscreen Driver"
+	depends on I2C
+	help
+	  Say Y here if you have a IT7260 Touchscreen Driver
+	  connected to your system.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called it7258_ts_i2c.
+
+config TOUCHSCREEN_ST
+	bool "STMicroelectronics Touchscreen Driver"
+	depends on I2C
+	help
+	  Say Y here if you have a STMicroelectronics Touchscreen.
+
+	  If unsure, say N.
+
+source "drivers/input/touchscreen/st/Kconfig"
 
 endif

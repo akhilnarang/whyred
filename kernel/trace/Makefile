@@ -41,6 +41,7 @@ obj-$(CONFIG_PREEMPTIRQ_EVENTS) += trace_irqsoff.o
 obj-$(CONFIG_IRQSOFF_TRACER) += trace_irqsoff.o
 obj-$(CONFIG_PREEMPT_TRACER) += trace_irqsoff.o
 obj-$(CONFIG_SCHED_TRACER) += trace_sched_wakeup.o
+obj-$(CONFIG_CPU_FREQ_SWITCH_PROFILER) += trace_cpu_freq_switch.o
 obj-$(CONFIG_NOP_TRACER) += trace_nop.o
 obj-$(CONFIG_STACK_TRACER) += trace_stack.o
 obj-$(CONFIG_MMIOTRACE) += trace_mmiotrace.o
@@ -70,7 +71,12 @@ endif
 obj-$(CONFIG_PROBE_EVENTS) += trace_probe.o
 obj-$(CONFIG_UPROBE_EVENT) += trace_uprobe.o
 obj-$(CONFIG_GPU_TRACEPOINTS) += gpu-traces.o
+obj-$(CONFIG_QCOM_RTB) += msm_rtb.o
 
 obj-$(CONFIG_TRACEPOINT_BENCHMARK) += trace_benchmark.o
+obj-$(CONFIG_IPC_LOGGING) += ipc_logging.o
+ifdef CONFIG_DEBUG_FS
+obj-$(CONFIG_IPC_LOGGING) += ipc_logging_debug.o
+endif
 
 libftrace-y := ftrace.o

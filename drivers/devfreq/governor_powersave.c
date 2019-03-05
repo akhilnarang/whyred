@@ -14,7 +14,8 @@
 #include "governor.h"
 
 static int devfreq_powersave_func(struct devfreq *df,
-				  unsigned long *freq)
+				  unsigned long *freq,
+				u32 *flag)
 {
 	/*
 	 * target callback should be able to get ceiling value as
@@ -29,7 +30,7 @@ static int devfreq_powersave_handler(struct devfreq *devfreq,
 {
 	int ret = 0;
 
-	if (event == DEVFREQ_GOV_START) {
+	if (event == DEVFREQ_GOV_START || event == DEVFREQ_GOV_RESUME) {
 		mutex_lock(&devfreq->lock);
 		ret = update_devfreq(devfreq);
 		mutex_unlock(&devfreq->lock);

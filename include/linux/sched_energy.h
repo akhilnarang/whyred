@@ -29,6 +29,8 @@
 #define for_each_possible_sd_level(level)		    \
 	for (level = 0; level < NR_SD_LEVELS; level++)
 
+extern bool sched_energy_aware;
+
 #ifdef CONFIG_SMP
 
 extern struct sched_group_energy *sge_array[NR_CPUS][NR_SD_LEVELS];

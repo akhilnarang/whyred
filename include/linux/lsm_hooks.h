@@ -1384,6 +1384,8 @@ union security_list_options {
 					size_t *len);
 	int (*inode_create)(struct inode *dir, struct dentry *dentry,
 				umode_t mode);
+	int (*inode_post_create)(struct inode *dir, struct dentry *dentry,
+				umode_t mode);
 	int (*inode_link)(struct dentry *old_dentry, struct inode *dir,
 				struct dentry *new_dentry);
 	int (*inode_unlink)(struct inode *dir, struct dentry *dentry);
@@ -1440,6 +1442,7 @@ union security_list_options {
 					struct fown_struct *fown, int sig);
 	int (*file_receive)(struct file *file);
 	int (*file_open)(struct file *file, const struct cred *cred);
+	int (*file_close)(struct file *file);
 
 	int (*task_create)(unsigned long clone_flags);
 	void (*task_free)(struct task_struct *task);
@@ -1666,6 +1669,7 @@ struct security_hook_heads {
 	struct list_head inode_free_security;
 	struct list_head inode_init_security;
 	struct list_head inode_create;
+	struct list_head inode_post_create;
 	struct list_head inode_link;
 	struct list_head inode_unlink;
 	struct list_head inode_symlink;
@@ -1702,6 +1706,7 @@ struct security_hook_heads {
 	struct list_head file_send_sigiotask;
 	struct list_head file_receive;
 	struct list_head file_open;
+	struct list_head file_close;
 	struct list_head task_create;
 	struct list_head task_free;
 	struct list_head cred_alloc_blank;

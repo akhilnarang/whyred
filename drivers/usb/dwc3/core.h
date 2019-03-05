@@ -26,6 +26,8 @@
 #include <linux/dma-mapping.h>
 #include <linux/mm.h>
 #include <linux/debugfs.h>
+#include <linux/workqueue.h>
+#include <linux/wait.h>
 
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
@@ -57,12 +59,15 @@
 #define DWC3_DEVICE_EVENT_WAKEUP		4
 #define DWC3_DEVICE_EVENT_HIBER_REQ		5
 #define DWC3_DEVICE_EVENT_EOPF			6
+/* For version 2.30a and above */
+#define DWC3_DEVICE_EVENT_SUSPEND		6
 #define DWC3_DEVICE_EVENT_SOF			7
 #define DWC3_DEVICE_EVENT_ERRATIC_ERROR		9
 #define DWC3_DEVICE_EVENT_CMD_CMPL		10
 #define DWC3_DEVICE_EVENT_OVERFLOW		11
 
 #define DWC3_GEVNTCOUNT_MASK	0xfffc
+#define DWC3_GEVNTCOUNT_EHB	(1 << 31)
 #define DWC3_GSNPSID_MASK	0xffff0000
 #define DWC3_GSNPSREV_MASK	0xffff
 
@@ -125,6 +130,11 @@
 #define DWC3_GEVNTSIZ(n)	(0xc408 + (n * 0x10))
 #define DWC3_GEVNTCOUNT(n)	(0xc40c + (n * 0x10))
 
+#define DWC3_GEVNTCOUNT_EVNTINTRPTMASK		(1 << 31)
+#define DWC3_GEVNTADRHI_EVNTADRHI_GSI_EN(n)	(n << 22)
+#define DWC3_GEVNTADRHI_EVNTADRHI_GSI_IDX(n)	(n << 16)
+#define DWC3_GEVENT_TYPE_GSI			0x3
+
 #define DWC3_GHWPARAMS8		0xc600
 #define DWC3_GFLADJ		0xc630
 
@@ -141,6 +151,8 @@
 #define DWC3_DEPCMDPAR0(n)	(0xc808 + (n * 0x10))
 #define DWC3_DEPCMD(n)		(0xc80c + (n * 0x10))
 
+#define DWC3_DEV_IMOD(n)	(0xca00 + (n * 0x4))
+
 /* OTG Registers */
 #define DWC3_OCFG		0xcc00
 #define DWC3_OCTL		0xcc04
@@ -150,9 +162,16 @@
 
 /* Bit fields */
 
+/* Global SoC Bus Configuration Register 1 */
+#define DWC3_GSBUSCFG1_PIPETRANSLIMIT_MASK	(0x0f << 8)
+#define DWC3_GSBUSCFG1_PIPETRANSLIMIT(n)	((n) << 8)
+
 /* Global Configuration Register */
 #define DWC3_GCTL_PWRDNSCALE(n)	((n) << 19)
+#define DWC3_GCTL_PWRDNSCALEMASK (0xFFF80000)
 #define DWC3_GCTL_U2RSTECN	(1 << 16)
+#define DWC3_GCTL_SOFITPSYNC	(1 << 10)
+#define DWC3_GCTL_U2EXIT_LFPS	(1 << 2)
 #define DWC3_GCTL_RAMCLKSEL(x)	(((x) & DWC3_GCTL_CLK_MASK) << 6)
 #define DWC3_GCTL_CLK_BUS	(0)
 #define DWC3_GCTL_CLK_PIPE	(1)
@@ -174,8 +193,15 @@
 #define DWC3_GCTL_GBLHIBERNATIONEN	(1 << 1)
 #define DWC3_GCTL_DSBLCLKGTNG		(1 << 0)
 
+/* Global User Control Register */
+#define DWC3_GUCTL_REFCLKPER		(0x3FF << 22)
+
+/* Global Debug LTSSM Register */
+#define DWC3_GDBGLTSSM_LINKSTATE_MASK	(0xF << 22)
+
 /* Global USB2 PHY Configuration Register */
 #define DWC3_GUSB2PHYCFG_PHYSOFTRST	(1 << 31)
+#define DWC3_GUSB2PHYCFG_ENBLSLPM	(1 << 8)
 #define DWC3_GUSB2PHYCFG_SUSPHY		(1 << 6)
 #define DWC3_GUSB2PHYCFG_ULPI_UTMI	(1 << 4)
 #define DWC3_GUSB2PHYCFG_ENBLSLPM	(1 << 8)
@@ -191,6 +217,7 @@
 /* Global USB3 PIPE Control Register */
 #define DWC3_GUSB3PIPECTL_PHYSOFTRST	(1 << 31)
 #define DWC3_GUSB3PIPECTL_U2SSINP3OK	(1 << 29)
+#define DWC3_GUSB3PIPECTL_UX_EXIT_IN_PX	(1 << 27)
 #define DWC3_GUSB3PIPECTL_REQP1P2P3	(1 << 24)
 #define DWC3_GUSB3PIPECTL_DEP1P2P3(n)	((n) << 19)
 #define DWC3_GUSB3PIPECTL_DEP1P2P3_MASK	DWC3_GUSB3PIPECTL_DEP1P2P3(7)
@@ -201,6 +228,8 @@
 #define DWC3_GUSB3PIPECTL_RX_DETOPOLL	(1 << 8)
 #define DWC3_GUSB3PIPECTL_TX_DEEPH_MASK	DWC3_GUSB3PIPECTL_TX_DEEPH(3)
 #define DWC3_GUSB3PIPECTL_TX_DEEPH(n)	((n) << 1)
+#define DWC3_GUSB3PIPECTL_DELAYP1TRANS  (1 << 18)
+#define DWC3_GUSB3PIPECTL_ELASTIC_BUF_MODE	(1 << 0)
 
 /* Global TX Fifo Size Register */
 #define DWC31_GTXFIFOSIZ_TXFRAMNUM	BIT(15)		/* DWC_usb31 only */
@@ -243,6 +272,12 @@
 /* Global Frame Length Adjustment Register */
 #define DWC3_GFLADJ_30MHZ_SDBND_SEL		(1 << 7)
 #define DWC3_GFLADJ_30MHZ_MASK			0x3f
+
+/* Global Frame Length Adjustment Register */
+#define DWC3_GFLADJ_REFCLK_240MHZDECR_PLS1	(1 << 31)
+#define DWC3_GFLADJ_REFCLK_240MHZ_DECR		(0x7F << 24)
+#define DWC3_GFLADJ_REFCLK_LPM_SEL		(1 << 23)
+#define DWC3_GFLADJ_REFCLK_FLADJ		(0x3FFF << 8)
 
 /* Device Configuration Register */
 #define DWC3_DCFG_DEVADDR(addr)	((addr) << 3)
@@ -309,6 +344,8 @@
 #define DWC3_DEVTEN_ERRTICERREN		(1 << 9)
 #define DWC3_DEVTEN_SOFEN		(1 << 7)
 #define DWC3_DEVTEN_EOPFEN		(1 << 6)
+/* For version 2.30a and above*/
+#define DWC3_DEVTEN_SUSPEND		(1 << 6)
 #define DWC3_DEVTEN_HIBERNATIONREQEVTEN	(1 << 5)
 #define DWC3_DEVTEN_WKUPEVTEN		(1 << 4)
 #define DWC3_DEVTEN_ULSTCNGEN		(1 << 3)
@@ -349,6 +386,7 @@
 #define DWC3_DGCMD_SET_LMP		0x01
 #define DWC3_DGCMD_SET_PERIODIC_PAR	0x02
 #define DWC3_DGCMD_XMIT_FUNCTION	0x03
+#define DWC3_DGCMD_XMIT_DEV		0x07
 
 /* These apply for core versions 1.94a and later */
 #define DWC3_DGCMD_SET_SCRATCHPAD_ADDR_LO	0x04
@@ -401,9 +439,19 @@
 #define DWC3_DEPCMD_TYPE_BULK		2
 #define DWC3_DEPCMD_TYPE_INTR		3
 
+#define DWC3_DEV_IMOD_COUNT_SHIFT	16
+#define DWC3_DEV_IMOD_COUNT_MASK	(0xffff << 16)
+#define DWC3_DEV_IMOD_INTERVAL_SHIFT	0
+#define DWC3_DEV_IMOD_INTERVAL_MASK	(0xffff << 0)
+
 /* Structures */
 
 struct dwc3_trb;
+
+enum event_buf_type {
+	EVT_BUF_TYPE_NORMAL,
+	EVT_BUF_TYPE_GSI
+};
 
 /**
  * struct dwc3_event_buffer - Software event buffer representation
@@ -418,6 +466,7 @@ struct dwc3_trb;
 struct dwc3_event_buffer {
 	void			*buf;
 	unsigned		length;
+	enum event_buf_type	type;
 	unsigned int		lpos;
 	unsigned int		count;
 	unsigned int		flags;
@@ -427,6 +476,36 @@ struct dwc3_event_buffer {
 	dma_addr_t		dma;
 
 	struct dwc3		*dwc;
+};
+
+struct dwc3_gadget_events {
+	unsigned int	disconnect;
+	unsigned int	reset;
+	unsigned int	connect;
+	unsigned int	wakeup;
+	unsigned int	link_status_change;
+	unsigned int	eopf;
+	unsigned int	suspend;
+	unsigned int	sof;
+	unsigned int	erratic_error;
+	unsigned int	overflow;
+	unsigned int	vendor_dev_test_lmp;
+	unsigned int	cmdcmplt;
+	unsigned int	unknown_event;
+};
+
+struct dwc3_ep_events {
+	unsigned int	xfercomplete;
+	unsigned int	xfernotready;
+	unsigned int	control_data;
+	unsigned int	control_status;
+	unsigned int	xferinprogress;
+	unsigned int	rxtxfifoevent;
+	unsigned int	streamevent;
+	unsigned int	epcmdcomplete;
+	unsigned int	cmdcmplt;
+	unsigned int	unknown_event;
+	unsigned int	total;
 };
 
 #define DWC3_EP_FLAG_STALLED	(1 << 0)
@@ -443,8 +522,10 @@ struct dwc3_event_buffer {
  * @endpoint: usb endpoint
  * @request_list: list of requests for this endpoint
  * @req_queued: list of requests on this ep which have TRBs setup
+ * @trb_dma_pool: dma pool used to get aligned trb memory pool
  * @trb_pool: array of transaction buffers
  * @trb_pool_dma: dma address of @trb_pool
+ * @num_trbs: num of trbs in the trb dma pool
  * @free_slot: next slot which is going to be used
  * @busy_slot: first slot which is owned by HW
  * @desc: usb_endpoint_descriptor pointer
@@ -454,18 +535,25 @@ struct dwc3_event_buffer {
  * @number: endpoint number (1 - 15)
  * @type: set to bmAttributes & USB_ENDPOINT_XFERTYPE_MASK
  * @resource_index: Resource transfer index
+ * @current_uf: Current uf received through last event parameter
  * @interval: the interval on which the ISOC transfer is started
  * @name: a human readable name e.g. ep1out-bulk
  * @direction: true for TX, false for RX
  * @stream_capable: true when streams are enabled
+ * @dbg_ep_events: different events counter for endpoint
+ * @dbg_ep_events_diff: differential events counter for endpoint
+ * @dbg_ep_events_ts: timestamp for previous event counters
+ * @fifo_depth: allocated TXFIFO depth
  */
 struct dwc3_ep {
 	struct usb_ep		endpoint;
 	struct list_head	request_list;
 	struct list_head	req_queued;
 
+	struct dma_pool		*trb_dma_pool;
 	struct dwc3_trb		*trb_pool;
 	dma_addr_t		trb_pool_dma;
+	u32			num_trbs;
 	u32			free_slot;
 	u32			busy_slot;
 	const struct usb_ss_ep_comp_descriptor *comp_desc;
@@ -486,12 +574,17 @@ struct dwc3_ep {
 	u8			number;
 	u8			type;
 	u8			resource_index;
+	u16			current_uf;
 	u32			interval;
 
 	char			name[20];
 
 	unsigned		direction:1;
 	unsigned		stream_capable:1;
+	struct dwc3_ep_events	dbg_ep_events;
+	struct dwc3_ep_events	dbg_ep_events_diff;
+	struct timespec		dbg_ep_events_ts;
+	int			fifo_depth;
 };
 
 enum dwc3_phy {
@@ -643,6 +736,18 @@ struct dwc3_scratchpad_array {
 	__le64	dma_adr[DWC3_MAX_HIBER_SCRATCHBUFS];
 };
 
+#define DWC3_CONTROLLER_ERROR_EVENT			0
+#define DWC3_CONTROLLER_RESET_EVENT			1
+#define DWC3_CONTROLLER_POST_RESET_EVENT		2
+#define DWC3_CORE_PM_SUSPEND_EVENT			3
+#define DWC3_CORE_PM_RESUME_EVENT			4
+#define DWC3_CONTROLLER_CONNDONE_EVENT			5
+#define DWC3_CONTROLLER_NOTIFY_OTG_EVENT		6
+#define DWC3_CONTROLLER_SET_CURRENT_DRAW_EVENT		7
+#define DWC3_CONTROLLER_RESTART_USB_SESSION		8
+#define DWC3_CONTROLLER_NOTIFY_DISABLE_UPDXFER		9
+
+#define MAX_INTR_STATS					10
 /**
  * struct dwc3 - representation of our controller
  * @ctrl_req: usb control request which is used for ep0
@@ -663,10 +768,12 @@ struct dwc3_scratchpad_array {
  * @gadget_driver: pointer to the gadget driver
  * @regs: base address for our registers
  * @regs_size: address space size
+ * @reg_phys: physical base address of dwc3 core register address space
  * @nr_scratch: number of scratch buffers
  * @num_event_buffers: calculated number of event buffers
  * @u1u2: only used on revisions <1.83a for workaround
- * @maximum_speed: maximum speed requested (mainly for testing purposes)
+ * @maximum_speed: maximum speed to operate as requested by sw
+ * @max_hw_supp_speed: maximum speed supported by hw design
  * @revision: revision register contents
  * @dr_mode: requested mode of operation
  * @usb2_phy: pointer to USB2 PHY
@@ -731,6 +838,23 @@ struct dwc3_scratchpad_array {
  * 	1	- -3.5dB de-emphasis
  * 	2	- No de-emphasis
  * 	3	- Reserved
+ * @is_drd: device supports dual-role or not
+ * @err_evt_seen: previous event in queue was erratic error
+ * @usb3_u1u2_disable: if true, disable U1U2 low power modes in Superspeed mode.
+ * @in_lpm: indicates if controller is in low power mode (no clocks)
+ * @tx_fifo_size: Available RAM size for TX fifo allocation
+ * @irq: irq number
+ * @bh: tasklet which handles the interrupt
+ * @irq_cnt: total irq count
+ * @last_irq_cnt: last irq count
+ * @bh_completion_time: time taken for taklet completion
+ * @bh_handled_evt_cnt: no. of events handled by tasklet per interrupt
+ * @bh_dbg_index: index for capturing bh_completion_time and bh_handled_evt_cnt
+ * @wait_linkstate: waitqueue for waiting LINK to move into required state
+ * @vbus_draw: current to be drawn from USB
+ * @imod_interval: set the interrupt moderation interval in 250ns
+ *			increments or 0 to disable.
+ * @create_reg_debugfs: create debugfs entry to allow dwc3 register dump
  */
 struct dwc3 {
 	struct usb_ctrlrequest	*ctrl_req;
@@ -769,6 +893,7 @@ struct dwc3 {
 
 	void __iomem		*regs;
 	size_t			regs_size;
+	phys_addr_t		reg_phys;
 
 	enum usb_dr_mode	dr_mode;
 
@@ -778,8 +903,13 @@ struct dwc3 {
 
 	u32			nr_scratch;
 	u32			num_event_buffers;
+	u32			num_normal_event_buffers;
+	u32			num_gsi_event_buffers;
+
+	u32			u1;
 	u32			u1u2;
 	u32			maximum_speed;
+	u32			max_hw_supp_speed;
 
 	/*
 	 * All 3.1 IP version constants are greater than the 3.0 IP
@@ -809,6 +939,8 @@ struct dwc3 {
 #define DWC3_REVISION_260A	0x5533260a
 #define DWC3_REVISION_270A	0x5533270a
 #define DWC3_REVISION_280A	0x5533280a
+#define DWC3_REVISION_300A	0x5533300a
+#define DWC3_REVISION_310A	0x5533310a
 
 /*
  * NOTICE: we're using bit 31 as a "is usb 3.1" flag. This is really
@@ -816,6 +948,7 @@ struct dwc3 {
  */
 #define DWC3_REVISION_IS_DWC31		0x80000000
 #define DWC3_USB31_REVISION_110A	(0x3131302a | DWC3_REVISION_IS_USB31)
+#define DWC3_USB31_REVISION_120A	(0x3132302a | DWC3_REVISION_IS_DWC31)
 
 	enum dwc3_ep0_next	ep0_next_event;
 	enum dwc3_ep0_state	ep0state;
@@ -845,6 +978,9 @@ struct dwc3 {
 
 	const char		*hsphy_interface;
 
+	void (*notify_event)(struct dwc3 *, unsigned, unsigned);
+	struct work_struct	wakeup_work;
+
 	unsigned		delayed_status:1;
 	unsigned		ep0_bounced:1;
 	unsigned		ep0_expect_in:1;
@@ -854,7 +990,6 @@ struct dwc3 {
 	unsigned		is_fpga:1;
 	unsigned		needs_fifo_resize:1;
 	unsigned		pullups_connected:1;
-	unsigned		resize_fifos:1;
 	unsigned		setup_packet_pending:1;
 	unsigned		three_stage_setup:1;
 	unsigned		usb3_lpm_capable:1;
@@ -873,6 +1008,51 @@ struct dwc3 {
 
 	unsigned		tx_de_emphasis_quirk:1;
 	unsigned		tx_de_emphasis:2;
+
+	unsigned		is_drd:1;
+	/* Indicate if the gadget was powered by the otg driver */
+	unsigned		vbus_active:1;
+	/* Indicate if software connect was issued by the usb_gadget_driver */
+	unsigned		softconnect:1;
+	unsigned		nominal_elastic_buffer:1;
+	unsigned		err_evt_seen:1;
+	unsigned		usb3_u1u2_disable:1;
+	/* Indicate if need to disable controller internal clkgating */
+	unsigned		disable_clk_gating:1;
+	unsigned		enable_bus_suspend:1;
+
+	struct dwc3_gadget_events	dbg_gadget_events;
+
+	atomic_t		in_lpm;
+	int			tx_fifo_size;
+	bool			b_suspend;
+	unsigned		vbus_draw;
+
+	u16			imod_interval;
+
+	struct workqueue_struct	*dwc_wq;
+	struct work_struct	bh_work;
+
+	/* IRQ timing statistics */
+	int			irq;
+	unsigned long		irq_cnt;
+	unsigned long		last_irq_cnt;
+	unsigned long		ep_cmd_timeout_cnt;
+	unsigned                bh_completion_time[MAX_INTR_STATS];
+	unsigned                bh_handled_evt_cnt[MAX_INTR_STATS];
+	unsigned                bh_dbg_index;
+	ktime_t			irq_start_time[MAX_INTR_STATS];
+	ktime_t			t_pwr_evt_irq;
+	unsigned                irq_completion_time[MAX_INTR_STATS];
+	unsigned                irq_event_count[MAX_INTR_STATS];
+	unsigned                irq_dbg_index;
+
+	unsigned long		l1_remote_wakeup_cnt;
+
+	wait_queue_head_t	wait_linkstate;
+	bool			create_reg_debugfs;
+	unsigned int		index;
+	int			last_fifo_depth;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -1022,7 +1202,22 @@ struct dwc3_gadget_ep_cmd_params {
 
 /* prototypes */
 void dwc3_set_mode(struct dwc3 *dwc, u32 mode);
-int dwc3_gadget_resize_tx_fifos(struct dwc3 *dwc);
+u32 dwc3_core_fifo_space(struct dwc3_ep *dep, u8 type);
+int dwc3_gadget_resize_tx_fifos(struct dwc3 *dwc, struct dwc3_ep *dep);
+
+/* check whether we are on the DWC_usb3 core */
+static inline bool dwc3_is_usb3(struct dwc3 *dwc)
+{
+	return !(dwc->revision & DWC3_REVISION_IS_DWC31);
+}
+
+/* check whether we are on the DWC_usb31 core */
+static inline bool dwc3_is_usb31(struct dwc3 *dwc)
+{
+	return !!(dwc->revision & DWC3_REVISION_IS_DWC31);
+}
+
+bool dwc3_has_imod(struct dwc3 *dwc);
 
 #if IS_ENABLED(CONFIG_USB_DWC3_HOST) || IS_ENABLED(CONFIG_USB_DWC3_DUAL_ROLE)
 int dwc3_host_init(struct dwc3 *dwc);
@@ -1037,16 +1232,21 @@ static inline void dwc3_host_exit(struct dwc3 *dwc)
 #if IS_ENABLED(CONFIG_USB_DWC3_GADGET) || IS_ENABLED(CONFIG_USB_DWC3_DUAL_ROLE)
 int dwc3_gadget_init(struct dwc3 *dwc);
 void dwc3_gadget_exit(struct dwc3 *dwc);
+void dwc3_gadget_restart(struct dwc3 *dwc);
 int dwc3_gadget_set_test_mode(struct dwc3 *dwc, int mode);
 int dwc3_gadget_get_link_state(struct dwc3 *dwc);
 int dwc3_gadget_set_link_state(struct dwc3 *dwc, enum dwc3_link_state state);
 int dwc3_send_gadget_ep_cmd(struct dwc3 *dwc, unsigned ep,
 		unsigned cmd, struct dwc3_gadget_ep_cmd_params *params);
 int dwc3_send_gadget_generic_command(struct dwc3 *dwc, unsigned cmd, u32 param);
+void dwc3_gadget_enable_irq(struct dwc3 *dwc);
+void dwc3_gadget_disable_irq(struct dwc3 *dwc);
 #else
 static inline int dwc3_gadget_init(struct dwc3 *dwc)
 { return 0; }
 static inline void dwc3_gadget_exit(struct dwc3 *dwc)
+{ }
+static inline void dwc3_gadget_restart(struct dwc3 *dwc)
 { }
 static inline int dwc3_gadget_set_test_mode(struct dwc3 *dwc, int mode)
 { return 0; }
@@ -1062,6 +1262,10 @@ static inline int dwc3_send_gadget_ep_cmd(struct dwc3 *dwc, unsigned ep,
 static inline int dwc3_send_gadget_generic_command(struct dwc3 *dwc,
 		int cmd, u32 param)
 { return 0; }
+static inline void dwc3_gadget_enable_irq(struct dwc3 *dwc)
+{ }
+static inline void dwc3_gadget_disable_irq(struct dwc3 *dwc)
+{ }
 #endif
 
 /* power management interface */
@@ -1080,6 +1284,7 @@ static inline int dwc3_gadget_resume(struct dwc3 *dwc)
 }
 #endif /* !IS_ENABLED(CONFIG_USB_DWC3_HOST) */
 
+
 #if IS_ENABLED(CONFIG_USB_DWC3_ULPI)
 int dwc3_ulpi_init(struct dwc3 *dwc);
 void dwc3_ulpi_exit(struct dwc3 *dwc);
@@ -1089,5 +1294,16 @@ static inline int dwc3_ulpi_init(struct dwc3 *dwc)
 static inline void dwc3_ulpi_exit(struct dwc3 *dwc)
 { }
 #endif
+
+
+int dwc3_core_init(struct dwc3 *dwc);
+int dwc3_core_pre_init(struct dwc3 *dwc);
+void dwc3_post_host_reset_core_init(struct dwc3 *dwc);
+int dwc3_event_buffers_setup(struct dwc3 *dwc);
+void dwc3_usb3_phy_suspend(struct dwc3 *dwc, int suspend);
+
+extern void dwc3_set_notifier(
+	void (*notify)(struct dwc3 *dwc3, unsigned event, unsigned value));
+extern int dwc3_notify_event(struct dwc3 *dwc3, unsigned event, unsigned value);
 
 #endif /* __DRIVERS_USB_DWC3_CORE_H */

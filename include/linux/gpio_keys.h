@@ -1,6 +1,8 @@
 #ifndef _GPIO_KEYS_H
 #define _GPIO_KEYS_H
 
+#define GPIO_KEYS_DEV_NAME "gpio-keys"
+
 struct device;
 struct gpio_desc;
 
@@ -52,7 +54,8 @@ struct gpio_keys_platform_data {
 	unsigned int rep:1;
 	int (*enable)(struct device *dev);
 	void (*disable)(struct device *dev);
-	const char *name;
+	const char *name;		/* input device name */
+	bool use_syscore;
 };
 
 #endif

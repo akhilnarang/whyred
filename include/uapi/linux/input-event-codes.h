@@ -337,6 +337,8 @@
 #define KEY_MICMUTE		248	/* Mute / unmute the microphone */
 
 /* Code 255 is reserved for special needs of AT keyboard driver */
+#define KEY_ANT_CONNECT		0x292
+#define KEY_ANT_UNCONNECT	0x293
 
 #define BTN_MISC		0x100
 #define BTN_0			0x100
@@ -611,6 +613,10 @@
 #define KEY_KBDINPUTASSIST_ACCEPT		0x264
 #define KEY_KBDINPUTASSIST_CANCEL		0x265
 
+
+#define KEY_HALL_OPEN		0x284
+#define KEY_HALL_CLOSE		0x285
+
 #define BTN_TRIGGER_HAPPY		0x2c0
 #define BTN_TRIGGER_HAPPY1		0x2c0
 #define BTN_TRIGGER_HAPPY2		0x2c1
@@ -758,7 +764,11 @@
 #define SW_ROTATE_LOCK		0x0c  /* set = rotate locked/disabled */
 #define SW_LINEIN_INSERT	0x0d  /* set = inserted */
 #define SW_MUTE_DEVICE		0x0e  /* set = device disabled */
-#define SW_MAX			0x0f
+#define SW_HPHL_OVERCURRENT	0x0f  /* set = over current on left hph */
+#define SW_HPHR_OVERCURRENT	0x10  /* set = over current on right hph */
+#define SW_MICROPHONE2_INSERT   0x11  /* set = inserted */
+#define SW_UNSUPPORT_INSERT	0x12  /* set = unsupported device inserted */
+#define SW_MAX			0x20
 #define SW_CNT			(SW_MAX+1)
 
 /*

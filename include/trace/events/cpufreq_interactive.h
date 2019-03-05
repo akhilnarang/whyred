@@ -106,6 +106,42 @@ TRACE_EVENT(cpufreq_interactive_unboost,
 	    TP_printk("%s", __get_str(s))
 );
 
+TRACE_EVENT(cpufreq_interactive_load_change,
+	    TP_PROTO(unsigned long cpu_id),
+	    TP_ARGS(cpu_id),
+	    TP_STRUCT__entry(
+		__field(unsigned long, cpu_id)
+	    ),
+	    TP_fast_assign(
+		__entry->cpu_id = cpu_id;
+	    ),
+	    TP_printk("re-evaluate for cpu=%lu", __entry->cpu_id)
+);
+
+TRACE_EVENT(cpufreq_interactive_cpuload,
+	    TP_PROTO(unsigned long cpu_id, unsigned int load,
+		     unsigned int new_task_pct, unsigned int prev,
+		     unsigned int predicted),
+	    TP_ARGS(cpu_id, load, new_task_pct, prev, predicted),
+	    TP_STRUCT__entry(
+		__field(unsigned long, cpu_id)
+		__field(unsigned int, load)
+		__field(unsigned int, new_task_pct)
+		__field(unsigned int, prev)
+		__field(unsigned int, predicted)
+	    ),
+	    TP_fast_assign(
+		__entry->cpu_id = cpu_id;
+		__entry->load = load;
+		__entry->new_task_pct = new_task_pct;
+		__entry->prev = prev;
+		__entry->predicted = predicted;
+	    ),
+	    TP_printk("cpu=%lu load=%u new_task_pct=%u prev=%u predicted=%u",
+		      __entry->cpu_id, __entry->load, __entry->new_task_pct,
+		      __entry->prev, __entry->predicted)
+);
+
 #endif /* _TRACE_CPUFREQ_INTERACTIVE_H */
 
 /* This part must be outside protection */

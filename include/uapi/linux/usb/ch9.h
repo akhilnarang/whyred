@@ -909,6 +909,30 @@ struct usb_ptm_cap_descriptor {
 } __attribute__((packed));
 
 /*
+ * Configuration Summary descriptors: Defines a list of functions in the
+ * configuration. This descriptor may be used by Host software to decide
+ * which Configuration to use to obtain the desired functionality.
+ */
+#define	USB_CAP_TYPE_CONFIG_SUMMARY	0x10
+
+struct function_class_info {
+	__u8 bClass;
+	__u8 bSubClass;
+	__u8 bProtocol;
+};
+
+struct usb_config_summary_descriptor {
+	__u8 bLength;
+	__u8 bDescriptorType;
+	__u8 bDevCapabilityType;
+	__u16 bcdVersion;
+	__u8 bConfigurationValue;
+	__u8 bMaxPower;
+	__u8 bNumFunctions;
+	struct function_class_info cs_info[];
+} __attribute__((packed));
+
+/*
  * The size of the descriptor for the Sublink Speed Attribute Count
  * (SSAC) specified in bmAttributes[4:0].
  */

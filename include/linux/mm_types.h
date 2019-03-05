@@ -208,6 +208,10 @@ struct page {
 					   not kmapped, ie. highmem) */
 #endif /* WANT_PAGE_VIRTUAL */
 
+#ifdef CONFIG_BLK_DEV_IO_TRACE
+	struct task_struct *tsk_dirty;	/* task that sets this page dirty */
+#endif
+
 #ifdef CONFIG_KMEMCHECK
 	/*
 	 * kmemcheck wants to track the status of each byte in a page; this
@@ -524,6 +528,10 @@ struct mm_struct {
 #ifdef CONFIG_HUGETLB_PAGE
 	atomic_long_t hugetlb_usage;
 #endif
+#ifdef CONFIG_MSM_APP_SETTINGS
+	int app_setting;
+#endif
+
 	struct work_struct async_put_work;
 };
 

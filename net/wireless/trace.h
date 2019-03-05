@@ -110,7 +110,7 @@
 				conf->dot11MeshHWMPconfirmationInterval;      \
 	} while (0)
 
-#define CHAN_ENTRY __field(enum ieee80211_band, band) \
+#define CHAN_ENTRY __field(enum nl80211_band, band) \
 		   __field(u16, center_freq)
 #define CHAN_ASSIGN(chan)					  \
 	do {							  \
@@ -125,7 +125,7 @@
 #define CHAN_PR_FMT "band: %d, freq: %u"
 #define CHAN_PR_ARG __entry->band, __entry->center_freq
 
-#define CHAN_DEF_ENTRY __field(enum ieee80211_band, band)		\
+#define CHAN_DEF_ENTRY __field(enum nl80211_band, band)		\
 		       __field(u32, control_freq)			\
 		       __field(u32, width)				\
 		       __field(u32, center_freq1)			\
@@ -1221,6 +1221,7 @@ TRACE_EVENT(rdev_connect,
 		__field(bool, privacy)
 		__field(u32, wpa_versions)
 		__field(u32, flags)
+		MAC_ENTRY(prev_bssid)
 	),
 	TP_fast_assign(
 		WIPHY_ASSIGN;
@@ -1232,13 +1233,32 @@ TRACE_EVENT(rdev_connect,
 		__entry->privacy = sme->privacy;
 		__entry->wpa_versions = sme->crypto.wpa_versions;
 		__entry->flags = sme->flags;
+		MAC_ASSIGN(prev_bssid, sme->prev_bssid);
 	),
 	TP_printk(WIPHY_PR_FMT ", " NETDEV_PR_FMT ", bssid: " MAC_PR_FMT
 		  ", ssid: %s, auth type: %d, privacy: %s, wpa versions: %u, "
-		  "flags: %u",
+		  "flags: %u, previous bssid: " MAC_PR_FMT,
 		  WIPHY_PR_ARG, NETDEV_PR_ARG, MAC_PR_ARG(bssid), __entry->ssid,
 		  __entry->auth_type, BOOL_TO_STR(__entry->privacy),
-		  __entry->wpa_versions, __entry->flags)
+		  __entry->wpa_versions, __entry->flags, MAC_PR_ARG(prev_bssid))
+);
+
+TRACE_EVENT(rdev_update_connect_params,
+	TP_PROTO(struct wiphy *wiphy, struct net_device *netdev,
+		 struct cfg80211_connect_params *sme, u32 changed),
+	TP_ARGS(wiphy, netdev, sme, changed),
+	TP_STRUCT__entry(
+		WIPHY_ENTRY
+		NETDEV_ENTRY
+		__field(u32, changed)
+	),
+	TP_fast_assign(
+		WIPHY_ASSIGN;
+		NETDEV_ASSIGN;
+		__entry->changed = changed;
+	),
+	TP_printk(WIPHY_PR_FMT ", " NETDEV_PR_FMT ", parameters changed: %u",
+		  WIPHY_PR_ARG, NETDEV_PR_ARG,  __entry->changed)
 );
 
 TRACE_EVENT(rdev_set_cqm_rssi_config,
@@ -2607,7 +2627,7 @@ TRACE_EVENT(cfg80211_scan_done,
 	TP_STRUCT__entry(
 		__field(u32, n_channels)
 		__dynamic_array(u8, ie, request ? request->ie_len : 0)
-		__array(u32, rates, IEEE80211_NUM_BANDS)
+		__array(u32, rates, NUM_NL80211_BANDS)
 		__field(u32, wdev_id)
 		MAC_ENTRY(wiphy_mac)
 		__field(bool, no_cck)
@@ -2618,7 +2638,7 @@ TRACE_EVENT(cfg80211_scan_done,
 			memcpy(__get_dynamic_array(ie), request->ie,
 			       request->ie_len);
 			memcpy(__entry->rates, request->rates,
-			       IEEE80211_NUM_BANDS);
+			       NUM_NL80211_BANDS);
 			__entry->wdev_id = request->wdev ?
 					request->wdev->identifier : 0;
 			if (request->wiphy)
@@ -2801,6 +2821,11 @@ TRACE_EVENT(cfg80211_ft_event,
 	),
 	TP_printk(WIPHY_PR_FMT ", " NETDEV_PR_FMT ", target_ap: " MAC_PR_FMT,
 		  WIPHY_PR_ARG, NETDEV_PR_ARG, MAC_PR_ARG(target_ap))
+);
+
+DEFINE_EVENT(wiphy_wdev_evt, rdev_abort_scan,
+	TP_PROTO(struct wiphy *wiphy, struct wireless_dev *wdev),
+	TP_ARGS(wiphy, wdev)
 );
 
 TRACE_EVENT(cfg80211_stop_iface,

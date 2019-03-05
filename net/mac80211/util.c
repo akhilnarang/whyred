@@ -59,7 +59,7 @@ void ieee80211_tx_set_protected(struct ieee80211_tx_data *tx)
 	}
 }
 
-int ieee80211_frame_duration(enum ieee80211_band band, size_t len,
+int ieee80211_frame_duration(enum nl80211_band band, size_t len,
 			     int rate, int erp, int short_preamble,
 			     int shift)
 {
@@ -77,7 +77,7 @@ int ieee80211_frame_duration(enum ieee80211_band band, size_t len,
 	 * is assumed to be 0 otherwise.
 	 */
 
-	if (band == IEEE80211_BAND_5GHZ || erp) {
+	if (band == NL80211_BAND_5GHZ || erp) {
 		/*
 		 * OFDM:
 		 *
@@ -129,7 +129,7 @@ int ieee80211_frame_duration(enum ieee80211_band band, size_t len,
 /* Exported duration function for driver use */
 __le16 ieee80211_generic_frame_duration(struct ieee80211_hw *hw,
 					struct ieee80211_vif *vif,
-					enum ieee80211_band band,
+					enum nl80211_band band,
 					size_t frame_len,
 					struct ieee80211_rate *rate)
 {
@@ -1126,7 +1126,7 @@ void ieee80211_set_wmm_default(struct ieee80211_sub_if_data *sdata,
 	rcu_read_lock();
 	chanctx_conf = rcu_dereference(sdata->vif.chanctx_conf);
 	use_11b = (chanctx_conf &&
-		   chanctx_conf->def.chan->band == IEEE80211_BAND_2GHZ) &&
+		   chanctx_conf->def.chan->band == NL80211_BAND_2GHZ) &&
 		 !(sdata->flags & IEEE80211_SDATA_OPERATING_GMODE);
 	rcu_read_unlock();
 
@@ -1298,7 +1298,7 @@ void ieee80211_send_deauth_disassoc(struct ieee80211_sub_if_data *sdata,
 static int ieee80211_build_preq_ies_band(struct ieee80211_local *local,
 					 u8 *buffer, size_t buffer_len,
 					 const u8 *ie, size_t ie_len,
-					 enum ieee80211_band band,
+					 enum nl80211_band band,
 					 u32 rate_mask,
 					 struct cfg80211_chan_def *chandef,
 					 size_t *offset)
@@ -1372,7 +1372,7 @@ static int ieee80211_build_preq_ies_band(struct ieee80211_local *local,
 		pos += ext_rates_len;
 	}
 
-	if (chandef->chan && sband->band == IEEE80211_BAND_2GHZ) {
+	if (chandef->chan && sband->band == NL80211_BAND_2GHZ) {
 		if (end - pos < 3)
 			goto out_err;
 		*pos++ = WLAN_EID_DS_PARAMS;
@@ -1476,7 +1476,7 @@ int ieee80211_build_preq_ies(struct ieee80211_local *local, u8 *buffer,
 
 	memset(ie_desc, 0, sizeof(*ie_desc));
 
-	for (i = 0; i < IEEE80211_NUM_BANDS; i++) {
+	for (i = 0; i < NUM_NL80211_BANDS; i++) {
 		if (bands_used & BIT(i)) {
 			pos += ieee80211_build_preq_ies_band(local,
 							     buffer + pos,
@@ -1519,7 +1519,7 @@ struct sk_buff *ieee80211_build_probe_req(struct ieee80211_sub_if_data *sdata,
 	struct sk_buff *skb;
 	struct ieee80211_mgmt *mgmt;
 	int ies_len;
-	u32 rate_masks[IEEE80211_NUM_BANDS] = {};
+	u32 rate_masks[NUM_NL80211_BANDS] = {};
 	struct ieee80211_scan_ies dummy_ie_desc;
 
 	/*
@@ -1579,7 +1579,7 @@ void ieee80211_send_probe_req(struct ieee80211_sub_if_data *sdata,
 
 u32 ieee80211_sta_get_rates(struct ieee80211_sub_if_data *sdata,
 			    struct ieee802_11_elems *elems,
-			    enum ieee80211_band band, u32 *basic_rates)
+			    enum nl80211_band band, u32 *basic_rates)
 {
 	struct ieee80211_supported_band *sband;
 	size_t num_rates;
@@ -2472,7 +2472,7 @@ int ieee80211_parse_bitrates(struct cfg80211_chan_def *chandef,
 
 int ieee80211_add_srates_ie(struct ieee80211_sub_if_data *sdata,
 			    struct sk_buff *skb, bool need_basic,
-			    enum ieee80211_band band)
+			    enum nl80211_band band)
 {
 	struct ieee80211_local *local = sdata->local;
 	struct ieee80211_supported_band *sband;
@@ -2517,7 +2517,7 @@ int ieee80211_add_srates_ie(struct ieee80211_sub_if_data *sdata,
 
 int ieee80211_add_ext_srates_ie(struct ieee80211_sub_if_data *sdata,
 				struct sk_buff *skb, bool need_basic,
-				enum ieee80211_band band)
+				enum nl80211_band band)
 {
 	struct ieee80211_local *local = sdata->local;
 	struct ieee80211_supported_band *sband;
@@ -3200,10 +3200,11 @@ int ieee80211_check_combinations(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_local *local = sdata->local;
 	struct ieee80211_sub_if_data *sdata_iter;
 	enum nl80211_iftype iftype = sdata->wdev.iftype;
-	int num[NUM_NL80211_IFTYPES];
 	struct ieee80211_chanctx *ctx;
-	int num_different_channels = 0;
 	int total = 1;
+	struct iface_combination_params params = {
+		.radar_detect = radar_detect,
+	};
 
 	lockdep_assert_held(&local->chanctx_mtx);
 
@@ -3213,9 +3214,6 @@ int ieee80211_check_combinations(struct ieee80211_sub_if_data *sdata,
 	if (WARN_ON(chandef && chanmode == IEEE80211_CHANCTX_SHARED &&
 		    !chandef->chan))
 		return -EINVAL;
-
-	if (chandef)
-		num_different_channels = 1;
 
 	if (WARN_ON(iftype >= NUM_NL80211_IFTYPES))
 		return -EINVAL;
@@ -3227,24 +3225,26 @@ int ieee80211_check_combinations(struct ieee80211_sub_if_data *sdata,
 		return 0;
 	}
 
-	memset(num, 0, sizeof(num));
+	if (chandef)
+		params.num_different_channels = 1;
 
 	if (iftype != NL80211_IFTYPE_UNSPECIFIED)
-		num[iftype] = 1;
+		params.iftype_num[iftype] = 1;
 
 	list_for_each_entry(ctx, &local->chanctx_list, list) {
 		if (ctx->replace_state == IEEE80211_CHANCTX_WILL_BE_REPLACED)
 			continue;
-		radar_detect |= ieee80211_chanctx_radar_detect(local, ctx);
+		params.radar_detect |=
+			ieee80211_chanctx_radar_detect(local, ctx);
 		if (ctx->mode == IEEE80211_CHANCTX_EXCLUSIVE) {
-			num_different_channels++;
+			params.num_different_channels++;
 			continue;
 		}
 		if (chandef && chanmode == IEEE80211_CHANCTX_SHARED &&
 		    cfg80211_chandef_compatible(chandef,
 						&ctx->conf.def))
 			continue;
-		num_different_channels++;
+		params.num_different_channels++;
 	}
 
 	list_for_each_entry_rcu(sdata_iter, &local->interfaces, list) {
@@ -3257,16 +3257,14 @@ int ieee80211_check_combinations(struct ieee80211_sub_if_data *sdata,
 		    local->hw.wiphy->software_iftypes & BIT(wdev_iter->iftype))
 			continue;
 
-		num[wdev_iter->iftype]++;
+		params.iftype_num[wdev_iter->iftype]++;
 		total++;
 	}
 
-	if (total == 1 && !radar_detect)
+	if (total == 1 && !params.radar_detect)
 		return 0;
 
-	return cfg80211_check_combinations(local->hw.wiphy,
-					   num_different_channels,
-					   radar_detect, num);
+	return cfg80211_check_combinations(local->hw.wiphy, &params);
 }
 
 static void
@@ -3282,12 +3280,10 @@ ieee80211_iter_max_chans(const struct ieee80211_iface_combination *c,
 int ieee80211_max_num_channels(struct ieee80211_local *local)
 {
 	struct ieee80211_sub_if_data *sdata;
-	int num[NUM_NL80211_IFTYPES] = {};
 	struct ieee80211_chanctx *ctx;
-	int num_different_channels = 0;
-	u8 radar_detect = 0;
 	u32 max_num_different_channels = 1;
 	int err;
+	struct iface_combination_params params = {0};
 
 	lockdep_assert_held(&local->chanctx_mtx);
 
@@ -3295,17 +3291,17 @@ int ieee80211_max_num_channels(struct ieee80211_local *local)
 		if (ctx->replace_state == IEEE80211_CHANCTX_WILL_BE_REPLACED)
 			continue;
 
-		num_different_channels++;
+		params.num_different_channels++;
 
-		radar_detect |= ieee80211_chanctx_radar_detect(local, ctx);
+		params.radar_detect |=
+			ieee80211_chanctx_radar_detect(local, ctx);
 	}
 
 	list_for_each_entry_rcu(sdata, &local->interfaces, list)
-		num[sdata->wdev.iftype]++;
+		params.iftype_num[sdata->wdev.iftype]++;
 
-	err = cfg80211_iter_combinations(local->hw.wiphy,
-					 num_different_channels, radar_detect,
-					 num, ieee80211_iter_max_chans,
+	err = cfg80211_iter_combinations(local->hw.wiphy, &params,
+					 ieee80211_iter_max_chans,
 					 &max_num_different_channels);
 	if (err < 0)
 		return err;
@@ -3346,3 +3342,17 @@ void ieee80211_init_tx_queue(struct ieee80211_sub_if_data *sdata,
 		txqi->txq.ac = IEEE80211_AC_BE;
 	}
 }
+
+void ieee80211_txq_get_depth(struct ieee80211_txq *txq,
+			     unsigned long *frame_cnt,
+			     unsigned long *byte_cnt)
+{
+	struct txq_info *txqi = to_txq_info(txq);
+
+	if (frame_cnt)
+		*frame_cnt = txqi->queue.qlen;
+
+	if (byte_cnt)
+		*byte_cnt = txqi->byte_cnt;
+}
+EXPORT_SYMBOL(ieee80211_txq_get_depth);

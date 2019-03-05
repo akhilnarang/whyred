@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012, 2016-2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -28,6 +28,7 @@
 #include "coresight-priv.h"
 
 static DEFINE_MUTEX(coresight_mutex);
+static struct coresight_device *curr_sink;
 
 static int coresight_id_match(struct device *dev, void *data)
 {
@@ -311,6 +312,9 @@ static int coresight_build_paths(struct coresight_device *csdev,
 	int i, ret = -EINVAL;
 	struct coresight_connection *conn;
 
+	if (!csdev)
+		return ret;
+
 	list_add(&csdev->path_link, path);
 
 	if ((csdev->type == CORESIGHT_DEV_TYPE_SINK ||
@@ -385,7 +389,127 @@ out:
 }
 EXPORT_SYMBOL_GPL(coresight_disable);
 
-static ssize_t enable_sink_show(struct device *dev,
+void coresight_abort(void)
+{
+	if (!mutex_trylock(&coresight_mutex)) {
+		pr_err_ratelimited("coresight: abort could not be processed\n");
+		return;
+	}
+	if (!curr_sink)
+		goto out;
+
+	if (curr_sink->enable && sink_ops(curr_sink)->abort) {
+		sink_ops(curr_sink)->abort(curr_sink);
+		curr_sink->enable = false;
+	}
+
+out:
+	mutex_unlock(&coresight_mutex);
+}
+EXPORT_SYMBOL_GPL(coresight_abort);
+
+static int coresight_disable_all_source(struct device *dev, void *data)
+{
+	struct coresight_device *csdev;
+	LIST_HEAD(path);
+
+	csdev = to_coresight_device(dev);
+
+	/*
+	 * No need to care about components that are not sources or not enabled
+	 */
+	if (!csdev->enable || csdev->type != CORESIGHT_DEV_TYPE_SOURCE)
+		return 0;
+
+	coresight_disable_source(csdev);
+
+	return 0;
+}
+
+static int coresight_toggle_source_path(struct device *dev, void *data)
+{
+	struct coresight_device *csdev;
+	bool *enable = data;
+	int ret;
+	LIST_HEAD(path);
+
+	csdev = to_coresight_device(dev);
+
+	/*
+	 * No need to care about components that are not sources or not enabled
+	 */
+	if (!csdev->enable || csdev->type != CORESIGHT_DEV_TYPE_SOURCE)
+		return 0;
+
+	if (*enable) {
+		ret = coresight_build_paths(csdev, &path, true);
+		if (ret) {
+			dev_err(&csdev->dev, "building path(s) failed\n");
+			return ret;
+		}
+	} else {
+		if (coresight_build_paths(csdev, &path, false))
+			dev_err(&csdev->dev, "releasing path(s) failed\n");
+	}
+
+	return 0;
+}
+
+static int coresight_switch_sink(struct coresight_device *csdev)
+{
+	int ret;
+	LIST_HEAD(slist);
+	bool enable = false;
+
+	mutex_lock(&coresight_mutex);
+
+	/* If curr_sink is same as new requested sink then do nothing. */
+	if (curr_sink == csdev)
+		goto out;
+
+	/*
+	 * If curr_sink is NULL then sink is getting set for the first time.
+	 * No source should be enabled at this time.
+	 */
+	if (!curr_sink) {
+		csdev->activated = true;
+		goto out;
+	}
+
+	/* curr_sink is different from csdev */
+	bus_for_each_dev(&coresight_bustype, NULL,
+			 &enable, coresight_toggle_source_path);
+
+	csdev->activated = true;
+	curr_sink->activated = false;
+
+	enable = true;
+	ret = bus_for_each_dev(&coresight_bustype, NULL, &enable,
+			       coresight_toggle_source_path);
+	if (ret)
+		goto err;
+out:
+	curr_sink = csdev;
+	mutex_unlock(&coresight_mutex);
+	return 0;
+
+err:
+	/* Disable sources */
+	bus_for_each_dev(&coresight_bustype, NULL,
+			 &enable, coresight_disable_all_source);
+
+	enable = false;
+	bus_for_each_dev(&coresight_bustype, NULL,
+			 &enable, coresight_toggle_source_path);
+
+	csdev->activated = false;
+	curr_sink->activated = true;
+
+	mutex_unlock(&coresight_mutex);
+	return ret;
+}
+
+static ssize_t curr_sink_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct coresight_device *csdev = to_coresight_device(dev);
@@ -393,7 +517,7 @@ static ssize_t enable_sink_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", (unsigned)csdev->activated);
 }
 
-static ssize_t enable_sink_store(struct device *dev,
+static ssize_t curr_sink_store(struct device *dev,
 				 struct device_attribute *attr,
 				 const char *buf, size_t size)
 {
@@ -406,16 +530,13 @@ static ssize_t enable_sink_store(struct device *dev,
 		return ret;
 
 	if (val)
-		csdev->activated = true;
-	else
-		csdev->activated = false;
+		coresight_switch_sink(csdev);
 
 	return size;
-
 }
-static DEVICE_ATTR_RW(enable_sink);
+static DEVICE_ATTR_RW(curr_sink);
 
-static ssize_t enable_source_show(struct device *dev,
+static ssize_t enable_show(struct device *dev,
 				  struct device_attribute *attr, char *buf)
 {
 	struct coresight_device *csdev = to_coresight_device(dev);
@@ -423,7 +544,7 @@ static ssize_t enable_source_show(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%u\n", (unsigned)csdev->enable);
 }
 
-static ssize_t enable_source_store(struct device *dev,
+static ssize_t enable_store(struct device *dev,
 				   struct device_attribute *attr,
 				   const char *buf, size_t size)
 {
@@ -445,16 +566,16 @@ static ssize_t enable_source_store(struct device *dev,
 
 	return size;
 }
-static DEVICE_ATTR_RW(enable_source);
+static DEVICE_ATTR_RW(enable);
 
 static struct attribute *coresight_sink_attrs[] = {
-	&dev_attr_enable_sink.attr,
+	&dev_attr_curr_sink.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(coresight_sink);
 
 static struct attribute *coresight_source_attrs[] = {
-	&dev_attr_enable_source.attr,
+	&dev_attr_enable.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(coresight_source);
@@ -698,6 +819,21 @@ struct coresight_device *coresight_register(struct coresight_desc *desc)
 
 	coresight_fixup_device_conns(csdev);
 	coresight_fixup_orphan_conns(csdev);
+
+	if (csdev->type == CORESIGHT_DEV_TYPE_SINK ||
+	    csdev->type == CORESIGHT_DEV_TYPE_LINKSINK) {
+		if (desc->pdata->default_sink) {
+			if (curr_sink) {
+				dev_warn(&csdev->dev,
+					 "overwritting curr sink %s",
+					 dev_name(&curr_sink->dev));
+				curr_sink->activated = false;
+			}
+
+			curr_sink = csdev;
+			curr_sink->activated = true;
+		}
+	}
 
 	mutex_unlock(&coresight_mutex);
 

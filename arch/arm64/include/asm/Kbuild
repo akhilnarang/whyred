@@ -2,7 +2,6 @@
 
 generic-y += bug.h
 generic-y += bugs.h
-generic-y += checksum.h
 generic-y += clkdev.h
 generic-y += cputime.h
 generic-y += current.h
@@ -14,6 +13,7 @@ generic-y += early_ioremap.h
 generic-y += emergency-restart.h
 generic-y += errno.h
 generic-y += ftrace.h
+generic-y += hash.h
 generic-y += hw_irq.h
 generic-y += ioctl.h
 generic-y += ioctls.h
@@ -36,7 +36,6 @@ generic-y += poll.h
 generic-y += preempt.h
 generic-y += resource.h
 generic-y += rwsem.h
-generic-y += sections.h
 generic-y += segment.h
 generic-y += sembuf.h
 generic-y += serial.h

@@ -7,6 +7,8 @@
 #include <linux/pageblock-flags.h>
 #include <linux/memory.h>
 #include <linux/hugetlb.h>
+#include <linux/kasan.h>
+#include <linux/page_owner.h>
 #include "internal.h"
 
 static int set_migratetype_isolate(struct page *page,
@@ -105,8 +107,6 @@ static void unset_migratetype_isolate(struct page *page, unsigned migratetype)
 			if (pfn_valid_within(page_to_pfn(buddy)) &&
 			    !is_migrate_isolate_page(buddy)) {
 				__isolate_free_page(page, order);
-				kernel_map_pages(page, (1 << order), 1);
-				set_page_refcounted(page);
 				isolated_page = page;
 			}
 		}
@@ -125,8 +125,10 @@ static void unset_migratetype_isolate(struct page *page, unsigned migratetype)
 	zone->nr_isolate_pageblock--;
 out:
 	spin_unlock_irqrestore(&zone->lock, flags);
-	if (isolated_page)
+	if (isolated_page) {
+		post_alloc_hook(page, order, __GFP_MOVABLE);
 		__free_pages(isolated_page, order);
+	}
 }
 
 static inline struct page *

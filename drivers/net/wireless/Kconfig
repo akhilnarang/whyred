@@ -272,6 +272,60 @@ config MWL8K
 	  To compile this driver as a module, choose M here: the module
 	  will be called mwl8k.  If unsure, say N.
 
+config WIFI_CONTROL_FUNC
+	bool "Enable WiFi control function abstraction"
+	help
+	  Enables Power/Reset/Carddetect function abstraction
+
+config WCNSS_CORE
+	tristate "Qualcomm WCNSS CORE driver"
+	select WIRELESS_EXT
+	select WEXT_PRIV
+	select WEXT_CORE
+	select WEXT_SPY
+	---help---
+	  Core driver for the Qualcomm WCNSS triple play connectivity subsystem
+
+config WCNSS_CORE_PRONTO
+	tristate "Qualcomm WCNSS Pronto Support"
+	depends on WCNSS_CORE
+	---help---
+	  Pronto Support for the Qualcomm WCNSS triple play connectivity subsystem
+
+config WCNSS_REGISTER_DUMP_ON_BITE
+	bool "Enable/disable WCNSS register dump when there is a WCNSS bite"
+	depends on WCNSS_CORE_PRONTO
+	---help---
+	  When Apps recieves a WDOG bite from WCNSS, collecting a register dump
+	  of WCNSS is helpful to root cause the failure. WCNSS may not be
+	  properly clocked in some WCNSS bite cases, and that may cause unclocked
+	  register access failures. So this feature is to enable/disable the
+	  register dump on WCNSS WDOG bite.
+
+config WCNSS_MEM_PRE_ALLOC
+	tristate "WCNSS pre-alloc memory support"
+	---help---
+	  Pre-allocate memory for the WLAN driver module.
+	  This feature enable cld wlan driver to use pre allocated memory
+	  for it's internal usage and release it to back to pre allocated pool.
+	  This memory is allocated at the cold boot time.
+
+config CNSS_CRYPTO
+	tristate "Enable CNSS crypto support"
+	---help---
+	  Add crypto support for the WLAN  driver module.
+	  This feature enable wlan driver to use the crypto APIs exported
+	  from cnss platform driver. This crypto APIs used to generate cipher
+	  key and add support for the WLAN driver module security protocol.
+
+config CNSS_QCA6290
+	bool "Enable CNSS QCA6290 chipset specific changes"
+	---help---
+	  This enables the changes from WLAN host driver that are specific to
+	  CNSS QCA6290 chipset.
+	  These changes are needed to support the new hardware architecture
+	  for CNSS QCA6290 chipset.
+
 source "drivers/net/wireless/ath/Kconfig"
 source "drivers/net/wireless/b43/Kconfig"
 source "drivers/net/wireless/b43legacy/Kconfig"
@@ -292,5 +346,9 @@ source "drivers/net/wireless/zd1211rw/Kconfig"
 source "drivers/net/wireless/mwifiex/Kconfig"
 source "drivers/net/wireless/cw1200/Kconfig"
 source "drivers/net/wireless/rsi/Kconfig"
+source "drivers/net/wireless/cnss/Kconfig"
+source "drivers/net/wireless/cnss2/Kconfig"
+source "drivers/net/wireless/cnss_genl/Kconfig"
+source "drivers/net/wireless/cnss_utils/Kconfig"
 
 endif # WLAN

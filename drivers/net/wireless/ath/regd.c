@@ -38,28 +38,28 @@ static int __ath_regd_init(struct ath_regulatory *reg);
 /* We enable active scan on these a case by case basis by regulatory domain */
 #define ATH9K_2GHZ_CH12_13	REG_RULE(2467-10, 2472+10, 40, 0, 20,\
 					 NL80211_RRF_NO_IR)
-#define ATH9K_2GHZ_CH14		REG_RULE(2484-10, 2484+10, 40, 0, 20,\
+#define ATH9K_2GHZ_CH14		REG_RULE(2484 - 10, 2484 + 10, 20, 0, 20,\
 					 NL80211_RRF_NO_IR | \
 					 NL80211_RRF_NO_OFDM)
 
 /* We allow IBSS on these on a case by case basis by regulatory domain */
-#define ATH9K_5GHZ_5150_5350	REG_RULE(5150-10, 5350+10, 80, 0, 30,\
+#define ATH9K_5GHZ_5180_5320	REG_RULE(5180 - 10, 5320 + 10, 160, 0, 20,\
 					 NL80211_RRF_NO_IR)
-#define ATH9K_5GHZ_5470_5850	REG_RULE(5470-10, 5850+10, 80, 0, 30,\
+#define ATH9K_5GHZ_5500_5825	REG_RULE(5500 - 10, 5825 + 10, 80, 0, 20,\
 					 NL80211_RRF_NO_IR)
-#define ATH9K_5GHZ_5725_5850	REG_RULE(5725-10, 5850+10, 80, 0, 30,\
+#define ATH9K_5GHZ_5745_5825	REG_RULE(5745 - 10, 5825 + 10, 80, 0, 20,\
 					 NL80211_RRF_NO_IR)
 
 #define ATH9K_2GHZ_ALL		ATH9K_2GHZ_CH01_11, \
 				ATH9K_2GHZ_CH12_13, \
 				ATH9K_2GHZ_CH14
 
-#define ATH9K_5GHZ_ALL		ATH9K_5GHZ_5150_5350, \
-				ATH9K_5GHZ_5470_5850
+#define ATH9K_5GHZ_ALL		ATH9K_5GHZ_5180_5320, \
+				ATH9K_5GHZ_5500_5825
 
 /* This one skips what we call "mid band" */
-#define ATH9K_5GHZ_NO_MIDBAND	ATH9K_5GHZ_5150_5350, \
-				ATH9K_5GHZ_5725_5850
+#define ATH9K_5GHZ_NO_MIDBAND	ATH9K_5GHZ_5180_5320, \
+				ATH9K_5GHZ_5745_5825
 
 /* Can be used for:
  * 0x60, 0x61, 0x62 */
@@ -260,7 +260,7 @@ static bool ath_is_radar_freq(u16 center_freq,
 {
 	if (reg->country_code == CTRY_INDIA)
 		return (center_freq >= 5500 && center_freq <= 5700);
-	return (center_freq >= 5260 && center_freq <= 5700);
+	return (center_freq >= 5260 && center_freq <= 5720);
 }
 
 static void ath_force_clear_no_ir_chan(struct wiphy *wiphy,
@@ -340,12 +340,12 @@ ath_reg_apply_beaconing_flags(struct wiphy *wiphy,
 			      struct ath_regulatory *reg,
 			      enum nl80211_reg_initiator initiator)
 {
-	enum ieee80211_band band;
+	enum nl80211_band band;
 	struct ieee80211_supported_band *sband;
 	struct ieee80211_channel *ch;
 	unsigned int i;
 
-	for (band = 0; band < IEEE80211_NUM_BANDS; band++) {
+	for (band = 0; band < NUM_NL80211_BANDS; band++) {
 		if (!wiphy->bands[band])
 			continue;
 		sband = wiphy->bands[band];
@@ -378,7 +378,7 @@ ath_reg_apply_ir_flags(struct wiphy *wiphy,
 {
 	struct ieee80211_supported_band *sband;
 
-	sband = wiphy->bands[IEEE80211_BAND_2GHZ];
+	sband = wiphy->bands[NL80211_BAND_2GHZ];
 	if (!sband)
 		return;
 
@@ -407,10 +407,10 @@ static void ath_reg_apply_radar_flags(struct wiphy *wiphy,
 	struct ieee80211_channel *ch;
 	unsigned int i;
 
-	if (!wiphy->bands[IEEE80211_BAND_5GHZ])
+	if (!wiphy->bands[NL80211_BAND_5GHZ])
 		return;
 
-	sband = wiphy->bands[IEEE80211_BAND_5GHZ];
+	sband = wiphy->bands[NL80211_BAND_5GHZ];
 
 	for (i = 0; i < sband->n_channels; i++) {
 		ch = &sband->channels[i];
@@ -636,6 +636,8 @@ ath_regd_init_wiphy(struct ath_regulatory *reg,
 					 struct regulatory_request *request))
 {
 	const struct ieee80211_regdomain *regd;
+	u32 chan_num;
+	struct ieee80211_channel *chan;
 
 	wiphy->reg_notifier = reg_notifier;
 	wiphy->regulatory_flags |= REGULATORY_STRICT_REG |
@@ -658,6 +660,20 @@ ath_regd_init_wiphy(struct ath_regulatory *reg,
 	}
 
 	wiphy_apply_custom_regulatory(wiphy, regd);
+
+	/* For regulatory rules similar to the following:
+	 * REG_RULE(2412-10, 2462+10, 40, 0, 20, 0), channels 12/13 are enabled
+	 * due to support of 5/10 MHz.
+	 * Therefore, disable 2.4 Ghz channels that dont have 20 mhz bw
+	 */
+	for (chan_num = 0;
+	     chan_num < wiphy->bands[IEEE80211_BAND_2GHZ]->n_channels;
+	     chan_num++) {
+		chan = &wiphy->bands[IEEE80211_BAND_2GHZ]->channels[chan_num];
+		if (chan->flags & IEEE80211_CHAN_NO_20MHZ)
+			chan->flags |= IEEE80211_CHAN_DISABLED;
+	}
+
 	ath_reg_apply_radar_flags(wiphy, reg);
 	ath_reg_apply_world_flags(wiphy, NL80211_REGDOM_SET_BY_DRIVER, reg);
 	return 0;
@@ -777,7 +793,7 @@ ath_regd_init(struct ath_regulatory *reg,
 EXPORT_SYMBOL(ath_regd_init);
 
 u32 ath_regd_get_band_ctl(struct ath_regulatory *reg,
-			  enum ieee80211_band band)
+			  enum nl80211_band band)
 {
 	if (!reg->regpair ||
 	    (reg->country_code == CTRY_DEFAULT &&
@@ -799,9 +815,9 @@ u32 ath_regd_get_band_ctl(struct ath_regulatory *reg,
 	}
 
 	switch (band) {
-	case IEEE80211_BAND_2GHZ:
+	case NL80211_BAND_2GHZ:
 		return reg->regpair->reg_2ghz_ctl;
-	case IEEE80211_BAND_5GHZ:
+	case NL80211_BAND_5GHZ:
 		return reg->regpair->reg_5ghz_ctl;
 	default:
 		return NO_CTL;

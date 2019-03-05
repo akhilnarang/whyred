@@ -11,10 +11,13 @@
 # Copyright (C) 1995-2002 Russell King
 #
 
-ifneq ($(MACHINE),)
-include $(MACHINE)/Makefile.boot
-endif
 include $(srctree)/arch/arm/boot/dts/Makefile
+
+include $(srctree)/arch/arm/boot/dts/Makefile
+ifneq ($(DTSSUBDIR),)
+DTSSUBDIR_INCS=$(foreach DIR, $(DTSSUBDIR), $(addsuffix /Makefile, $(addprefix $(srctree)/arch/arm/boot/dts/, $(DIR))))
+include $(DTSSUBDIR_INCS)
+endif
 
 # Note: the following conditions must always be true:
 #   ZRELADDR == virt_to_phys(PAGE_OFFSET + TEXT_OFFSET)
@@ -66,7 +69,7 @@ $(obj)/zImage:	$(obj)/compressed/vmlinux FORCE
 
 $(obj)/zImage-dtb:	$(obj)/zImage $(DTB_OBJS) FORCE
 	$(call if_changed,cat)
-	@echo '  Kernel: $@ is ready'
+	@$(kecho) '  Kernel: $@ is ready'
 
 endif
 

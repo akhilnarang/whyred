@@ -205,12 +205,25 @@ struct rx_attention {
  *		descriptor.
  */
 
+#ifndef CONFIG_ATH10K_SNOC
 struct rx_frag_info {
 	u8 ring0_more_count;
 	u8 ring1_more_count;
 	u8 ring2_more_count;
 	u8 ring3_more_count;
 } __packed;
+#else
+struct rx_frag_info {
+	u8 ring0_more_count;
+	u8 ring1_more_count;
+	u8 ring2_more_count;
+	u8 ring3_more_count;
+	u8 ring4_more_count;
+	u8 ring5_more_count;
+	u8 ring6_more_count;
+	u8 ring7_more_count;
+} __packed;
+#endif
 
 /*
  * ring0_more_count
@@ -239,6 +252,9 @@ enum htt_rx_mpdu_encrypt_type {
 	HTT_RX_MPDU_ENCRYPT_WAPI             = 5,
 	HTT_RX_MPDU_ENCRYPT_AES_CCM_WPA2     = 6,
 	HTT_RX_MPDU_ENCRYPT_NONE             = 7,
+	HTT_RX_MPDU_ENCRYPT_AES_CCM256_WPA2  = 8,
+	HTT_RX_MPDU_ENCRYPT_AES_GCMP_WPA2    = 9,
+	HTT_RX_MPDU_ENCRYPT_AES_GCMP256_WPA2 = 10,
 };
 
 #define RX_MPDU_START_INFO0_PEER_IDX_MASK     0x000007ff
@@ -465,10 +481,22 @@ struct rx_msdu_start_qca99x0 {
 	__le32 info2; /* %RX_MSDU_START_INFO2_ */
 } __packed;
 
+#ifdef CONFIG_ATH10K_SNOC
+struct rx_msdu_start_wcn3990 {
+	__le32 info3;
+} __packed;
+#else
+struct rx_msdu_start_wcn3990 {
+} __packed;
+#endif
+
 struct rx_msdu_start {
 	struct rx_msdu_start_common common;
 	union {
 		struct rx_msdu_start_qca99x0 qca99x0;
+	} __packed;
+	union {
+		struct rx_msdu_start_wcn3990 wcn3990;
 	} __packed;
 } __packed;
 
@@ -589,11 +617,21 @@ struct rx_msdu_end_qca99x0 {
 	__le32 info2;
 } __packed;
 
+struct rx_msdu_end_wcn3990 {
+	__le32 rule_indication_0;
+	__le32 rule_indication_1;
+	__le32 rule_indication_2;
+	__le32 rule_indication_3;
+} __packed;
+
 struct rx_msdu_end {
 	struct rx_msdu_end_common common;
 	union {
 		struct rx_msdu_end_qca99x0 qca99x0;
 	} __packed;
+#ifdef CONFIG_ATH10K_SNOC
+	struct rx_msdu_end_wcn3990 wcn3990;
+#endif
 } __packed;
 
 /*
@@ -656,26 +694,6 @@ struct rx_msdu_end {
  *		Reserved: HW should fill with zero.  FW should ignore.
  */
 
-#define RX_PPDU_START_SIG_RATE_SELECT_OFDM 0
-#define RX_PPDU_START_SIG_RATE_SELECT_CCK  1
-
-#define RX_PPDU_START_SIG_RATE_OFDM_48 0
-#define RX_PPDU_START_SIG_RATE_OFDM_24 1
-#define RX_PPDU_START_SIG_RATE_OFDM_12 2
-#define RX_PPDU_START_SIG_RATE_OFDM_6  3
-#define RX_PPDU_START_SIG_RATE_OFDM_54 4
-#define RX_PPDU_START_SIG_RATE_OFDM_36 5
-#define RX_PPDU_START_SIG_RATE_OFDM_18 6
-#define RX_PPDU_START_SIG_RATE_OFDM_9  7
-
-#define RX_PPDU_START_SIG_RATE_CCK_LP_11  0
-#define RX_PPDU_START_SIG_RATE_CCK_LP_5_5 1
-#define RX_PPDU_START_SIG_RATE_CCK_LP_2   2
-#define RX_PPDU_START_SIG_RATE_CCK_LP_1   3
-#define RX_PPDU_START_SIG_RATE_CCK_SP_11  4
-#define RX_PPDU_START_SIG_RATE_CCK_SP_5_5 5
-#define RX_PPDU_START_SIG_RATE_CCK_SP_2   6
-
 #define HTT_RX_PPDU_START_PREAMBLE_LEGACY        0x04
 #define HTT_RX_PPDU_START_PREAMBLE_HT            0x08
 #define HTT_RX_PPDU_START_PREAMBLE_HT_WITH_TXBF  0x09
@@ -710,25 +728,6 @@ struct rx_msdu_end {
 
 /* No idea what this flag means. It seems to be always set in rate. */
 #define RX_PPDU_START_RATE_FLAG BIT(3)
-
-enum rx_ppdu_start_rate {
-	RX_PPDU_START_RATE_OFDM_48M = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_OFDM_48M,
-	RX_PPDU_START_RATE_OFDM_24M = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_OFDM_24M,
-	RX_PPDU_START_RATE_OFDM_12M = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_OFDM_12M,
-	RX_PPDU_START_RATE_OFDM_6M  = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_OFDM_6M,
-	RX_PPDU_START_RATE_OFDM_54M = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_OFDM_54M,
-	RX_PPDU_START_RATE_OFDM_36M = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_OFDM_36M,
-	RX_PPDU_START_RATE_OFDM_18M = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_OFDM_18M,
-	RX_PPDU_START_RATE_OFDM_9M  = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_OFDM_9M,
-
-	RX_PPDU_START_RATE_CCK_LP_11M  = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_CCK_LP_11M,
-	RX_PPDU_START_RATE_CCK_LP_5_5M = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_CCK_LP_5_5M,
-	RX_PPDU_START_RATE_CCK_LP_2M   = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_CCK_LP_2M,
-	RX_PPDU_START_RATE_CCK_LP_1M   = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_CCK_LP_1M,
-	RX_PPDU_START_RATE_CCK_SP_11M  = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_CCK_SP_11M,
-	RX_PPDU_START_RATE_CCK_SP_5_5M = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_CCK_SP_5_5M,
-	RX_PPDU_START_RATE_CCK_SP_2M   = RX_PPDU_START_RATE_FLAG | ATH10K_HW_RATE_CCK_SP_2M,
-};
 
 struct rx_ppdu_start {
 	struct {
@@ -992,9 +991,51 @@ struct rx_ppdu_end_qca6174 {
 
 struct rx_pkt_end {
 	__le32 info0; /* %RX_PKT_END_INFO0_ */
+#ifndef CONFIG_ATH10K_SNOC
 	__le32 phy_timestamp_1;
 	__le32 phy_timestamp_2;
-	__le32 rx_location_info; /* %RX_LOCATION_INFO_ */
+#else
+	__le64 phy_timestamp_1;
+	__le64 phy_timestamp_2;
+#endif
+} __packed;
+
+#define RX_LOCATION_INFO0_RTT_FAC_LEGACY_MASK		0x00003fff
+#define RX_LOCATION_INFO0_RTT_FAC_LEGACY_LSB		0
+#define RX_LOCATION_INFO0_RTT_FAC_VHT_MASK		0x1fff8000
+#define RX_LOCATION_INFO0_RTT_FAC_VHT_LSB		15
+#define RX_LOCATION_INFO0_RTT_STRONGEST_CHAIN_MASK	0xc0000000
+#define RX_LOCATION_INFO0_RTT_STRONGEST_CHAIN_LSB	30
+#define RX_LOCATION_INFO0_RTT_FAC_LEGACY_STATUS		BIT(14)
+#define RX_LOCATION_INFO0_RTT_FAC_VHT_STATUS		BIT(29)
+
+#define RX_LOCATION_INFO1_RTT_PREAMBLE_TYPE_MASK	0x0000000c
+#define RX_LOCATION_INFO1_RTT_PREAMBLE_TYPE_LSB		2
+#define RX_LOCATION_INFO1_PKT_BW_MASK			0x00000030
+#define RX_LOCATION_INFO1_PKT_BW_LSB			4
+#define RX_LOCATION_INFO1_SKIP_P_SKIP_BTCF_MASK		0x0000ff00
+#define RX_LOCATION_INFO1_SKIP_P_SKIP_BTCF_LSB		8
+#define RX_LOCATION_INFO1_RTT_MSC_RATE_MASK		0x000f0000
+#define RX_LOCATION_INFO1_RTT_MSC_RATE_LSB		16
+#define RX_LOCATION_INFO1_RTT_PBD_LEG_BW_MASK		0x00300000
+#define RX_LOCATION_INFO1_RTT_PBD_LEG_BW_LSB		20
+#define RX_LOCATION_INFO1_TIMING_BACKOFF_MASK		0x07c00000
+#define RX_LOCATION_INFO1_TIMING_BACKOFF_LSB		22
+#define RX_LOCATION_INFO1_RTT_TX_FRAME_PHASE_MASK	0x18000000
+#define RX_LOCATION_INFO1_RTT_TX_FRAME_PHASE_LSB	27
+#define RX_LOCATION_INFO1_RTT_CFR_STATUS		BIT(0)
+#define RX_LOCATION_INFO1_RTT_CIR_STATUS		BIT(1)
+#define RX_LOCATION_INFO1_RTT_GI_TYPE			BIT(7)
+#define RX_LOCATION_INFO1_RTT_MAC_PHY_PHASE		BIT(29)
+#define RX_LOCATION_INFO1_RTT_TX_DATA_START_X_PHASE	BIT(30)
+#define RX_LOCATION_INFO1_RX_LOCATION_VALID		BIT(31)
+
+struct rx_location_info {
+	__le32 rx_location_info0; /* %RX_LOCATION_INFO0_ */
+	__le32 rx_location_info1; /* %RX_LOCATION_INFO1_ */
+#ifdef CONFIG_ATH10K_SNOC
+	__le32 rx_location_info2; /* %RX_LOCATION_INFO2_ */
+#endif
 } __packed;
 
 enum rx_phy_ppdu_end_info0 {
@@ -1067,11 +1108,40 @@ struct rx_phy_ppdu_end {
 
 struct rx_ppdu_end_qca99x0 {
 	struct rx_pkt_end rx_pkt_end;
+	__le32 rx_location_info; /* %RX_LOCATION_INFO_ */
 	struct rx_phy_ppdu_end rx_phy_ppdu_end;
 	__le32 rx_timing_offset; /* %RX_PPDU_END_RX_TIMING_OFFSET_ */
 	__le32 rx_info; /* %RX_PPDU_END_RX_INFO_ */
 	__le16 bb_length;
 	__le16 info1; /* %RX_PPDU_END_INFO1_ */
+} __packed;
+
+struct rx_ppdu_end_qca9984 {
+	struct rx_pkt_end rx_pkt_end;
+	struct rx_location_info rx_location_info;
+	struct rx_phy_ppdu_end rx_phy_ppdu_end;
+	__le32 rx_timing_offset; /* %RX_PPDU_END_RX_TIMING_OFFSET_ */
+	__le32 rx_info; /* %RX_PPDU_END_RX_INFO_ */
+	__le16 bb_length;
+	__le16 info1; /* %RX_PPDU_END_INFO1_ */
+} __packed;
+
+struct rx_timing_offset {
+	__le32 timing_offset;
+};
+
+struct rx_ppdu_end_wcn3990 {
+	__le32 reserved_info_0;
+	__le32 reserved_info_1;
+	__le32 rx_antenna_info;
+	__le32 rx_coex_info;
+	__le32 rx_mpdu_cnt_info;
+	__le32 rx_bb_length;
+	__le64 phy_timestamp_tx;
+	struct rx_pkt_end rx_pkt_end;
+	struct rx_phy_ppdu_end rx_phy_ppdu_end;
+	struct rx_timing_offset rx_timing_offset;
+	struct rx_location_info rx_location_info;
 } __packed;
 
 struct rx_ppdu_end {
@@ -1080,6 +1150,10 @@ struct rx_ppdu_end {
 		struct rx_ppdu_end_qca988x qca988x;
 		struct rx_ppdu_end_qca6174 qca6174;
 		struct rx_ppdu_end_qca99x0 qca99x0;
+		struct rx_ppdu_end_qca9984 qca9984;
+#ifdef CONFIG_ATH10K_SNOC
+		struct rx_ppdu_end_wcn3990 wcn3990;
+#endif
 	} __packed;
 } __packed;
 

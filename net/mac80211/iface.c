@@ -979,6 +979,7 @@ static void ieee80211_do_stop(struct ieee80211_sub_if_data *sdata,
 
 		spin_lock_bh(&txqi->queue.lock);
 		ieee80211_purge_tx_queue(&local->hw, &txqi->queue);
+		txqi->byte_cnt = 0;
 		spin_unlock_bh(&txqi->queue.lock);
 
 		atomic_set(&sdata->txqs_len[txqi->txq.ac], 0);
@@ -1791,7 +1792,7 @@ int ieee80211_if_add(struct ieee80211_local *local, const char *name,
 	INIT_DELAYED_WORK(&sdata->dec_tailroom_needed_wk,
 			  ieee80211_delayed_tailroom_dec);
 
-	for (i = 0; i < IEEE80211_NUM_BANDS; i++) {
+	for (i = 0; i < NUM_NL80211_BANDS; i++) {
 		struct ieee80211_supported_band *sband;
 		sband = local->hw.wiphy->bands[i];
 		sdata->rc_rateidx_mask[i] =

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014 Qualcomm Atheros, Inc.
+ * Copyright (c) 2014-2016 Qualcomm Atheros, Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,14 +16,16 @@
 
 #include <linux/device.h>
 #include "wil_platform.h"
+#include "msm_11ad.h"
 
 int __init wil_platform_modinit(void)
 {
-	return 0;
+	return msm_11ad_modinit();
 }
 
 void wil_platform_modexit(void)
 {
+	msm_11ad_modexit();
 }
 
 /**
@@ -33,9 +35,10 @@ void wil_platform_modexit(void)
  * It returns a handle which is used with the rest of the API
  *
  */
-void *wil_platform_init(struct device *dev, struct wil_platform_ops *ops)
+void *wil_platform_init(struct device *dev, struct wil_platform_ops *ops,
+			const struct wil_platform_rops *rops, void *wil_handle)
 {
-	void *handle = ops; /* to return some non-NULL for 'void' impl. */
+	void *handle;
 
 	if (!ops) {
 		dev_err(dev,
@@ -43,7 +46,7 @@ void *wil_platform_init(struct device *dev, struct wil_platform_ops *ops)
 		return NULL;
 	}
 
-	/* platform specific init functions should be called here */
+	handle = msm_11ad_dev_init(dev, ops, rops, wil_handle);
 
 	return handle;
 }

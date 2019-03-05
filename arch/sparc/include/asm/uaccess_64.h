@@ -207,6 +207,8 @@ unsigned long __must_check ___copy_from_user(void *to,
 static inline unsigned long __must_check
 copy_from_user(void *to, const void __user *from, unsigned long size)
 {
+	check_object_size(to, size, false);
+
 	return ___copy_from_user(to, from, size);
 }
 #define __copy_from_user copy_from_user
@@ -217,6 +219,8 @@ unsigned long __must_check ___copy_to_user(void __user *to,
 static inline unsigned long __must_check
 copy_to_user(void __user *to, const void *from, unsigned long size)
 {
+	check_object_size(from, size, true);
+
 	return ___copy_to_user(to, from, size);
 }
 #define __copy_to_user copy_to_user

@@ -530,7 +530,7 @@ struct ieee80211_bss_conf {
 	u8 sync_dtim_count;
 	u32 basic_rates;
 	struct ieee80211_rate *beacon_rate;
-	int mcast_rate[IEEE80211_NUM_BANDS];
+	int mcast_rate[NUM_NL80211_BANDS];
 	u16 ht_operation_mode;
 	s32 cqm_rssi_thold;
 	u32 cqm_rssi_hyst;
@@ -913,8 +913,8 @@ struct ieee80211_tx_info {
  * @common_ie_len: length of the common_ies
  */
 struct ieee80211_scan_ies {
-	const u8 *ies[IEEE80211_NUM_BANDS];
-	size_t len[IEEE80211_NUM_BANDS];
+	const u8 *ies[NUM_NL80211_BANDS];
+	size_t len[NUM_NL80211_BANDS];
 	const u8 *common_ies;
 	size_t common_ie_len;
 };
@@ -1016,6 +1016,14 @@ ieee80211_tx_info_clear_status(struct ieee80211_tx_info *info)
  * @RX_FLAG_MIC_STRIPPED: The mic was stripped of this packet. Decryption was
  *	done by the hardware
  * @RX_FLAG_LDPC: LDPC was used
+ * @RX_FLAG_ONLY_MONITOR: Report frame only to monitor interfaces without
+ *	processing it in any regular way.
+ *	This is useful if drivers offload some frames but still want to report
+ *	them for sniffing purposes.
+ * @RX_FLAG_SKIP_MONITOR: Process and report frame to all interfaces except
+ *	monitor interfaces.
+ *	This is useful if drivers offload some frames but still want to report
+ *	them for sniffing purposes.
  * @RX_FLAG_STBC_MASK: STBC 2 bit bitmask. 1 - Nss=1, 2 - Nss=2, 3 - Nss=3
  * @RX_FLAG_10MHZ: 10 MHz (half channel) was used
  * @RX_FLAG_5MHZ: 5 MHz (quarter channel) was used
@@ -1061,6 +1069,8 @@ enum mac80211_rx_flags {
 	RX_FLAG_MACTIME_END		= BIT(21),
 	RX_FLAG_VHT			= BIT(22),
 	RX_FLAG_LDPC			= BIT(23),
+	RX_FLAG_ONLY_MONITOR		= BIT(24),
+	RX_FLAG_SKIP_MONITOR		= BIT(25),
 	RX_FLAG_STBC_MASK		= BIT(26) | BIT(27),
 	RX_FLAG_10MHZ			= BIT(28),
 	RX_FLAG_5MHZ			= BIT(29),
@@ -1082,6 +1092,7 @@ enum mac80211_rx_flags {
  * @RX_VHT_FLAG_160MHZ: 160 MHz was used
  * @RX_VHT_FLAG_BF: packet was beamformed
  */
+
 enum mac80211_rx_vht_flags {
 	RX_VHT_FLAG_80MHZ		= BIT(0),
 	RX_VHT_FLAG_160MHZ		= BIT(1),
@@ -1696,7 +1707,7 @@ struct ieee80211_sta_rates {
  * @txq: per-TID data TX queues (if driver uses the TXQ abstraction)
  */
 struct ieee80211_sta {
-	u32 supp_rates[IEEE80211_NUM_BANDS];
+	u32 supp_rates[NUM_NL80211_BANDS];
 	u8 addr[ETH_ALEN];
 	u16 aid;
 	struct ieee80211_sta_ht_cap ht_cap;
@@ -3783,11 +3794,12 @@ void ieee80211_restart_hw(struct ieee80211_hw *hw);
  * This function must be called with BHs disabled.
  *
  * @hw: the hardware this frame came in on
+ * @sta: the station the frame was received from, or %NULL
  * @skb: the buffer to receive, owned by mac80211 after this call
  * @napi: the NAPI context
  */
-void ieee80211_rx_napi(struct ieee80211_hw *hw, struct sk_buff *skb,
-		       struct napi_struct *napi);
+void ieee80211_rx_napi(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
+		       struct sk_buff *skb, struct napi_struct *napi);
 
 /**
  * ieee80211_rx - receive frame
@@ -3811,7 +3823,7 @@ void ieee80211_rx_napi(struct ieee80211_hw *hw, struct sk_buff *skb,
  */
 static inline void ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb)
 {
-	ieee80211_rx_napi(hw, skb, NULL);
+	ieee80211_rx_napi(hw, NULL, skb, NULL);
 }
 
 /**
@@ -4306,7 +4318,7 @@ __le16 ieee80211_ctstoself_duration(struct ieee80211_hw *hw,
  */
 __le16 ieee80211_generic_frame_duration(struct ieee80211_hw *hw,
 					struct ieee80211_vif *vif,
-					enum ieee80211_band band,
+					enum nl80211_band band,
 					size_t frame_len,
 					struct ieee80211_rate *rate);
 
@@ -5214,7 +5226,7 @@ struct rate_control_ops {
 };
 
 static inline int rate_supported(struct ieee80211_sta *sta,
-				 enum ieee80211_band band,
+				 enum nl80211_band band,
 				 int index)
 {
 	return (sta == NULL || sta->supp_rates[band] & BIT(index));
@@ -5499,4 +5511,19 @@ void ieee80211_unreserve_tid(struct ieee80211_sta *sta, u8 tid);
  */
 struct sk_buff *ieee80211_tx_dequeue(struct ieee80211_hw *hw,
 				     struct ieee80211_txq *txq);
+
+/**
+ * ieee80211_txq_get_depth - get pending frame/byte count of given txq
+ *
+ * The values are not guaranteed to be coherent with regard to each other, i.e.
+ * txq state can change half-way of this function and the caller may end up
+ * with "new" frame_cnt and "old" byte_cnt or vice-versa.
+ *
+ * @txq: pointer obtained from station or virtual interface
+ * @frame_cnt: pointer to store frame count
+ * @byte_cnt: pointer to store byte count
+ */
+void ieee80211_txq_get_depth(struct ieee80211_txq *txq,
+			     unsigned long *frame_cnt,
+			     unsigned long *byte_cnt);
 #endif /* MAC80211_H */

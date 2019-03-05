@@ -319,7 +319,8 @@ static int cfg80211_get_chans_dfs_required(struct wiphy *wiphy,
 		if (!c)
 			return -EINVAL;
 
-		if (c->flags & IEEE80211_CHAN_RADAR)
+		if ((c->flags & IEEE80211_CHAN_RADAR) &&
+		    !(wiphy->flags & WIPHY_FLAG_DFS_OFFLOAD))
 			return 1;
 	}
 	return 0;
@@ -455,6 +456,105 @@ bool cfg80211_chandef_dfs_usable(struct wiphy *wiphy,
 	return (r1 + r2 > 0);
 }
 
+/*
+ * Checks if center frequency of chan falls with in the bandwidth
+ * range of chandef.
+ */
+bool cfg80211_is_sub_chan(struct cfg80211_chan_def *chandef,
+			  struct ieee80211_channel *chan)
+{
+	int width;
+	u32 cf_offset, freq;
+
+	if (chandef->chan->center_freq == chan->center_freq)
+		return true;
+
+	width = cfg80211_chandef_get_width(chandef);
+	if (width <= 20)
+		return false;
+
+	cf_offset = width / 2 - 10;
+
+	for (freq = chandef->center_freq1 - width / 2 + 10;
+	     freq <= chandef->center_freq1 + width / 2 - 10; freq += 20) {
+		if (chan->center_freq == freq)
+			return true;
+	}
+
+	if (!chandef->center_freq2)
+		return false;
+
+	for (freq = chandef->center_freq2 - width / 2 + 10;
+	     freq <= chandef->center_freq2 + width / 2 - 10; freq += 20) {
+		if (chan->center_freq == freq)
+			return true;
+	}
+
+	return false;
+}
+
+bool cfg80211_beaconing_iface_active(struct wireless_dev *wdev)
+{
+	bool active = false;
+
+	ASSERT_WDEV_LOCK(wdev);
+
+	if (!wdev->chandef.chan)
+		return false;
+
+	switch (wdev->iftype) {
+	case NL80211_IFTYPE_AP:
+	case NL80211_IFTYPE_P2P_GO:
+		active = wdev->beacon_interval != 0;
+		break;
+	case NL80211_IFTYPE_ADHOC:
+		active = wdev->ssid_len != 0;
+		break;
+	case NL80211_IFTYPE_MESH_POINT:
+		active = wdev->mesh_id_len != 0;
+		break;
+	case NL80211_IFTYPE_STATION:
+	case NL80211_IFTYPE_OCB:
+	case NL80211_IFTYPE_P2P_CLIENT:
+	case NL80211_IFTYPE_MONITOR:
+	case NL80211_IFTYPE_AP_VLAN:
+	case NL80211_IFTYPE_WDS:
+	case NL80211_IFTYPE_P2P_DEVICE:
+		break;
+	case NL80211_IFTYPE_UNSPECIFIED:
+	case NUM_NL80211_IFTYPES:
+		WARN_ON(1);
+	}
+
+	return active;
+}
+
+bool cfg80211_any_wiphy_oper_chan(struct wiphy *wiphy,
+				  struct ieee80211_channel *chan)
+{
+	struct wireless_dev *wdev;
+
+	ASSERT_RTNL();
+
+	if (!(chan->flags & IEEE80211_CHAN_RADAR))
+		return false;
+
+	list_for_each_entry(wdev, &wiphy->wdev_list, list) {
+		wdev_lock(wdev);
+		if (!cfg80211_beaconing_iface_active(wdev)) {
+			wdev_unlock(wdev);
+			continue;
+		}
+
+		if (cfg80211_is_sub_chan(&wdev->chandef, chan)) {
+			wdev_unlock(wdev);
+			return true;
+		}
+		wdev_unlock(wdev);
+	}
+
+	return false;
+}
 
 static bool cfg80211_get_chans_dfs_available(struct wiphy *wiphy,
 					     u32 center_freq,
@@ -479,7 +579,9 @@ static bool cfg80211_get_chans_dfs_available(struct wiphy *wiphy,
 		if (c->flags & IEEE80211_CHAN_DISABLED)
 			return false;
 
-		if ((c->flags & IEEE80211_CHAN_RADAR)  &&
+		/* check for radar flags */
+		if ((!(wiphy->flags & WIPHY_FLAG_DFS_OFFLOAD)) &&
+		    (c->flags & IEEE80211_CHAN_RADAR) &&
 		    (c->dfs_state != NL80211_DFS_AVAILABLE))
 			return false;
 	}
@@ -590,10 +692,17 @@ static bool cfg80211_secondary_chans_ok(struct wiphy *wiphy,
 
 	for (freq = start_freq; freq <= end_freq; freq += 20) {
 		c = ieee80211_get_channel(wiphy, freq);
-		if (!c || c->flags & prohibited_flags)
+
+		if (!c)
+			return false;
+
+		if ((!(wiphy->flags & WIPHY_FLAG_DFS_OFFLOAD)) &&
+		    (c->flags & prohibited_flags & IEEE80211_CHAN_RADAR))
+			return false;
+
+		if (c->flags & prohibited_flags & ~IEEE80211_CHAN_RADAR)
 			return false;
 	}
-
 	return true;
 }
 
@@ -739,7 +848,7 @@ static bool cfg80211_ir_permissive_chan(struct wiphy *wiphy,
 	 * and thus fail the GO instantiation, consider only the interfaces of
 	 * the current registered device.
 	 */
-	list_for_each_entry(wdev, &rdev->wdev_list, list) {
+	list_for_each_entry(wdev, &rdev->wiphy.wdev_list, list) {
 		struct ieee80211_channel *other_chan = NULL;
 		int r1, r2;
 
@@ -768,7 +877,7 @@ static bool cfg80211_ir_permissive_chan(struct wiphy *wiphy,
 		if (chan == other_chan)
 			return true;
 
-		if (chan->band != IEEE80211_BAND_5GHZ)
+		if (chan->band != NL80211_BAND_5GHZ)
 			continue;
 
 		r1 = cfg80211_get_unii(chan->center_freq);

@@ -92,7 +92,7 @@ struct sync_timeline_ops {
 struct sync_timeline {
 	struct kref		kref;
 	const struct sync_timeline_ops	*ops;
-	char			name[32];
+	char			name[64];
 
 	/* protected by child_list_lock */
 	bool			destroyed;
@@ -154,7 +154,7 @@ struct sync_fence_cb {
 struct sync_fence {
 	struct file		*file;
 	struct kref		kref;
-	char			name[32];
+	char			name[64];
 #ifdef CONFIG_DEBUG_FS
 	struct list_head	sync_fence_list;
 #endif

@@ -131,7 +131,7 @@ struct snd_seq_client_port *snd_seq_create_port(struct snd_seq_client *client,
 	unsigned long flags;
 	struct snd_seq_client_port *new_port, *p;
 	int num = -1;
-	
+
 	/* sanity check */
 	if (snd_BUG_ON(!client))
 		return NULL;

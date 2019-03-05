@@ -73,7 +73,7 @@ config DEBUG_RODATA
 	  If in doubt, say Y
 
 config DEBUG_ALIGN_RODATA
-	depends on DEBUG_RODATA && ARM64_4K_PAGES
+	depends on DEBUG_RODATA
 	bool "Align linker sections up to SECTION_SIZE"
 	help
 	  If this option is enabled, sections that may potentially be marked as
@@ -84,6 +84,46 @@ config DEBUG_ALIGN_RODATA
 	  performance is more important than memory pressure.
 
 	  If in doubt, say N
+
+config FORCE_PAGES
+        bool "Force lowmem to be mapped with 4K pages"
+        help
+          There are some advanced debug features that can only be done when
+          memory is mapped with pages instead of sections. Enable this option
+          to always map lowmem pages with pages. This may have a performance
+          cost due to increased TLB pressure.
+
+          If unsure say N.
+
+config FREE_PAGES_RDONLY
+        bool "Set pages as read only while on the buddy list"
+        select FORCE_PAGES
+        select DEBUG_PAGEALLOC
+        help
+          Pages are always mapped in the kernel. This means that anyone
+          can write to the page if they have the address. Enable this option
+          to mark pages as read only to trigger a fault if any code attempts
+          to write to a page on the buddy list. This may have a performance
+          impact.
+
+          If unsure, say N.
+
+config KERNEL_TEXT_RDONLY
+        bool "Set kernel text section pages as read only"
+	depends on FREE_PAGES_RDONLY
+        depends on !DEBUG_RODATA
+        help
+          The kernel text pages are always mapped in the kernel.
+	  This means that anyone can write to the page if they have
+	  the address. Enable this option to mark the kernel text pages
+	  as read only to trigger a fault if any code attempts to write
+	  to a page part of the kernel text section. This may have a
+	  performance impact.
+
+          If unsure, say N.
+
+config ARM64_STRICT_BREAK_BEFORE_MAKE
+	bool "Enforce strict break-before-make on page table updates "
 
 source "drivers/hwtracing/coresight/Kconfig"
 

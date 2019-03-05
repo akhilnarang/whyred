@@ -3,13 +3,18 @@ config DRM_MSM
 	tristate "MSM DRM"
 	depends on DRM
 	depends on ARCH_QCOM || (ARM && COMPILE_TEST)
-	depends on OF && COMMON_CLK
+	depends on OF
+	depends on !MSM_GVM
 	select REGULATOR
 	select DRM_KMS_HELPER
 	select DRM_PANEL
 	select SHMEM
 	select TMPFS
 	select QCOM_SCM
+	select BACKLIGHT_CLASS_DEVICE
+	select MSM_EXT_DISPLAY
+	select MMU_NOTIFIER
+	select INTERVAL_TREE
 	default y
 	help
 	  DRM/KMS driver for MSM/snapdragon.
@@ -33,6 +38,18 @@ config DRM_MSM_DSI
 	  Choose this option if you have a need for MIPI DSI connector
 	  support.
 
+config DRM_MSM_DSI_STAGING
+	bool "Enable new DSI driver support in MSM DRM driver"
+	depends on DRM_MSM
+	select DRM_PANEL
+	select DRM_MIPI_DSI
+	default y
+	help
+	  Choose this option if you need MIPI DSI connector support on MSM
+	  which conforms to DRM. MIPI stands for Mobile Industry Processor
+	  Interface and DSI stands for Display Serial Interface which powers
+	  the primary display of your mobile device.
+
 config DRM_MSM_DSI_PLL
 	bool "Enable DSI PLL driver in MSM DRM"
 	depends on DRM_MSM_DSI && COMMON_CLK
@@ -54,3 +71,41 @@ config DRM_MSM_DSI_20NM_PHY
 	default y
 	help
 	  Choose this option if the 20nm DSI PHY is used on the platform.
+
+config DRM_MSM_MDP4
+	tristate "MSM MDP4 DRM driver"
+	depends on DRM_MSM
+	default n
+	help
+	  Choose this option if MSM MDP4 revision support is needed in DRM/KMS.
+
+config DRM_MSM_HDCP
+	tristate "HDCP for MSM DRM"
+	depends on DRM_MSM
+	default n
+	help
+	  Chose this option if HDCP supported is needed in DRM/KMS driver.
+
+config DRM_SDE_WB
+	bool "Enable Writeback support in SDE DRM"
+	depends on DRM_MSM
+	default y
+	help
+	  Choose this option for writeback connector support.
+
+config DRM_SDE_HDMI
+	bool "Enable HDMI driver support in DRM SDE driver"
+	depends on DRM_MSM
+	default y
+	help
+	  Choose this option if HDMI connector support is needed in SDE driver.
+
+config DRM_SDE_EVTLOG_DEBUG
+	bool "Enable event logging in MSM DRM"
+	depends on DRM_MSM
+	help
+          The SDE DRM debugging provides support to enable display debugging
+          features to: dump SDE registers during driver errors, panic
+          driver during fatal errors and enable some display-driver logging
+          into an internal buffer (this avoids logging overhead).
+

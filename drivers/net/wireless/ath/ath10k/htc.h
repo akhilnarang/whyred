@@ -22,7 +22,6 @@
 #include <linux/list.h>
 #include <linux/bug.h>
 #include <linux/skbuff.h>
-#include <linux/semaphore.h>
 #include <linux/timer.h>
 
 struct ath10k;
@@ -223,7 +222,8 @@ enum ath10k_htc_svc_gid {
 	ATH10K_HTC_SVC_GRP_WMI = 1,
 	ATH10K_HTC_SVC_GRP_NMI = 2,
 	ATH10K_HTC_SVC_GRP_HTT = 3,
-
+	ATH10K_IPA_SERVICE_GROUP = 5,
+	ATH10K_LOG_SERVICE_GROUP = 6,
 	ATH10K_HTC_SVC_GRP_TEST = 254,
 	ATH10K_HTC_SVC_GRP_LAST = 255,
 };
@@ -247,7 +247,10 @@ enum ath10k_htc_svc_id {
 	ATH10K_HTC_SVC_ID_NMI_DATA	= SVC(ATH10K_HTC_SVC_GRP_NMI, 1),
 
 	ATH10K_HTC_SVC_ID_HTT_DATA_MSG	= SVC(ATH10K_HTC_SVC_GRP_HTT, 0),
-
+	ATH10K_HTC_SVC_ID_HTT_DATA2_MSG = SVC(ATH10K_HTC_SVC_GRP_HTT, 1),
+	ATH10K_HTC_SVC_ID_HTT_DATA3_MSG = SVC(ATH10K_HTC_SVC_GRP_HTT, 2),
+	ATH10K_HTC_SVC_ID_HTT_IPA_MSG = SVC(ATH10K_IPA_SERVICE_GROUP, 0),
+	ATH10K_HTC_SVC_ID_HTT_LOG_MSG = SVC(ATH10K_LOG_SERVICE_GROUP, 0),
 	/* raw stream service (i.e. flash, tcmd, calibration apps) */
 	ATH10K_HTC_SVC_ID_TEST_RAW_STREAMS = SVC(ATH10K_HTC_SVC_GRP_TEST, 0),
 };
@@ -297,10 +300,10 @@ struct ath10k_htc_svc_conn_resp {
 #define ATH10K_NUM_CONTROL_TX_BUFFERS 2
 #define ATH10K_HTC_MAX_LEN 4096
 #define ATH10K_HTC_MAX_CTRL_MSG_LEN 256
-#define ATH10K_HTC_WAIT_TIMEOUT_HZ (1*HZ)
+#define ATH10K_HTC_WAIT_TIMEOUT_HZ (1 * HZ)
 #define ATH10K_HTC_CONTROL_BUFFER_SIZE (ATH10K_HTC_MAX_CTRL_MSG_LEN + \
 					sizeof(struct ath10k_htc_hdr))
-#define ATH10K_HTC_CONN_SVC_TIMEOUT_HZ (1*HZ)
+#define ATH10K_HTC_CONN_SVC_TIMEOUT_HZ (1 * HZ)
 
 struct ath10k_htc_ep {
 	struct ath10k_htc *htc;

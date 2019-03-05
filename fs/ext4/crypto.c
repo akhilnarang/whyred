@@ -389,14 +389,12 @@ int ext4_decrypt(struct page *page)
 				page->index, page, page, GFP_NOFS);
 }
 
-int ext4_encrypted_zeroout(struct inode *inode, struct ext4_extent *ex)
+int ext4_encrypted_zeroout(struct inode *inode, ext4_lblk_t lblk,
+			   ext4_fsblk_t pblk, ext4_lblk_t len)
 {
 	struct ext4_crypto_ctx	*ctx;
 	struct page		*ciphertext_page = NULL;
 	struct bio		*bio;
-	ext4_lblk_t		lblk = le32_to_cpu(ex->ee_block);
-	ext4_fsblk_t		pblk = ext4_ext_pblock(ex);
-	unsigned int		len = ext4_ext_get_actual_len(ex);
 	int			ret, err = 0;
 
 #if 0
@@ -459,7 +457,8 @@ errout:
 
 bool ext4_valid_contents_enc_mode(uint32_t mode)
 {
-	return (mode == EXT4_ENCRYPTION_MODE_AES_256_XTS);
+	return (mode == EXT4_ENCRYPTION_MODE_AES_256_XTS ||
+		mode == EXT4_ENCRYPTION_MODE_PRIVATE);
 }
 
 /**

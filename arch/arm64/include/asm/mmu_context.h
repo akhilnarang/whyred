@@ -28,20 +28,25 @@
 #include <asm-generic/mm_hooks.h>
 #include <asm/cputype.h>
 #include <asm/pgtable.h>
+#include <linux/msm_rtb.h>
 #include <asm/tlbflush.h>
 
 #ifdef CONFIG_PID_IN_CONTEXTIDR
 static inline void contextidr_thread_switch(struct task_struct *next)
 {
+	pid_t pid = task_pid_nr(next);
 	asm(
 	"	msr	contextidr_el1, %0\n"
 	"	isb"
 	:
-	: "r" (task_pid_nr(next)));
+	: "r" (pid));
+	uncached_logk(LOGK_CTXID, (void *)(u64)pid);
+
 }
 #else
 static inline void contextidr_thread_switch(struct task_struct *next)
 {
+	uncached_logk(LOGK_CTXID, (void *)(u64)task_pid_nr(next));
 }
 #endif
 
@@ -167,30 +172,21 @@ void check_and_switch_context(struct mm_struct *mm, unsigned int cpu);
 
 #define init_new_context(tsk,mm)	({ atomic64_set(&(mm)->context.id, 0); 0; })
 
-/*
- * This is called when "tsk" is about to enter lazy TLB mode.
- *
- * mm:  describes the currently active mm context
- * tsk: task which is entering lazy tlb
- * cpu: cpu number which is entering lazy tlb
- *
- * tsk->mm will be NULL
- */
-static inline void
-enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
-{
-}
-
 #ifdef CONFIG_ARM64_SW_TTBR0_PAN
 static inline void update_saved_ttbr0(struct task_struct *tsk,
 				      struct mm_struct *mm)
 {
-	if (system_uses_ttbr0_pan()) {
-		u64 ttbr;
-		BUG_ON(mm->pgd == swapper_pg_dir);
+	u64 ttbr;
+
+	if (!system_uses_ttbr0_pan())
+		return;
+
+	if (mm == &init_mm)
+		ttbr = __pa_symbol(empty_zero_page);
+	else
 		ttbr = virt_to_phys(mm->pgd) | ASID(mm) << 48;
-		WRITE_ONCE(task_thread_info(tsk)->ttbr0, ttbr);
-	}
+
+	WRITE_ONCE(task_thread_info(tsk)->ttbr0, ttbr);
 }
 #else
 static inline void update_saved_ttbr0(struct task_struct *tsk,
@@ -198,6 +194,16 @@ static inline void update_saved_ttbr0(struct task_struct *tsk,
 {
 }
 #endif
+
+static inline void
+enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
+{
+	/*
+	 * We don't actually care about the ttbr0 mapping, so point it at the
+	 * zero page.
+	 */
+	update_saved_ttbr0(tsk, &init_mm);
+}
 
 static inline void __switch_mm(struct mm_struct *next)
 {
@@ -226,11 +232,9 @@ switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	 * Update the saved TTBR0_EL1 of the scheduled-in task as the previous
 	 * value may have not been initialised yet (activate_mm caller) or the
 	 * ASID has changed since the last run (following the context switch
-	 * of another thread of the same process). Avoid setting the reserved
-	 * TTBR0_EL1 to swapper_pg_dir (init_mm; e.g. via idle_task_exit).
+	 * of another thread of the same process).
 	 */
-	if (next != &init_mm)
-		update_saved_ttbr0(tsk, next);
+	update_saved_ttbr0(tsk, next);
 }
 
 #define deactivate_mm(tsk,mm)	do { } while (0)

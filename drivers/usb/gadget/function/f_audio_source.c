@@ -369,15 +369,22 @@ static void audio_send(struct audio_dev *audio)
 	s64 msecs;
 	s64 frames;
 	ktime_t now;
+	unsigned long flags;
 
+	spin_lock_irqsave(&audio->lock, flags);
 	/* audio->substream will be null if we have been closed */
-	if (!audio->substream)
+	if (!audio->substream) {
+		spin_unlock_irqrestore(&audio->lock, flags);
 		return;
+	}
 	/* audio->buffer_pos will be null if we have been stopped */
-	if (!audio->buffer_pos)
+	if (!audio->buffer_pos) {
+		spin_unlock_irqrestore(&audio->lock, flags);
 		return;
+	}
 
 	runtime = audio->substream->runtime;
+	spin_unlock_irqrestore(&audio->lock, flags);
 
 	/* compute number of frames to send */
 	now = ktime_get();
@@ -400,8 +407,21 @@ static void audio_send(struct audio_dev *audio)
 
 	while (frames > 0) {
 		req = audio_req_get(audio);
-		if (!req)
+		spin_lock_irqsave(&audio->lock, flags);
+		/* audio->substream will be null if we have been closed */
+		if (!audio->substream) {
+			spin_unlock_irqrestore(&audio->lock, flags);
+			return;
+		}
+		/* audio->buffer_pos will be null if we have been stopped */
+		if (!audio->buffer_pos) {
+			spin_unlock_irqrestore(&audio->lock, flags);
+			return;
+		}
+		if (!req) {
+			spin_unlock_irqrestore(&audio->lock, flags);
 			break;
+		}
 
 		length = frames_to_bytes(runtime, frames);
 		if (length > IN_EP_MAX_PACKET_SIZE)
@@ -427,6 +447,7 @@ static void audio_send(struct audio_dev *audio)
 		}
 
 		req->length = length;
+		spin_unlock_irqrestore(&audio->lock, flags);
 		ret = usb_ep_queue(audio->in_ep, req, GFP_ATOMIC);
 		if (ret < 0) {
 			pr_err("usb_ep_queue failed ret: %d\n", ret);
@@ -570,12 +591,36 @@ static int audio_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 
 	pr_debug("audio_set_alt intf %d, alt %d\n", intf, alt);
 
-	ret = config_ep_by_speed(cdev->gadget, f, audio->in_ep);
-	if (ret)
-		return ret;
+	if (!alt) {
+		usb_ep_disable(audio->in_ep);
+		return 0;
+	}
 
-	usb_ep_enable(audio->in_ep);
+	ret = config_ep_by_speed(cdev->gadget, f, audio->in_ep);
+	if (ret) {
+		audio->in_ep->desc = NULL;
+		pr_err("config_ep fail for audio ep ret %d\n", ret);
+		return ret;
+	}
+	ret = usb_ep_enable(audio->in_ep);
+	if (ret) {
+		audio->in_ep->desc = NULL;
+		pr_err("failed to enable audio ret %d\n", ret);
+		return ret;
+	}
+
 	return 0;
+}
+
+/*
+ * Because the data interface supports multiple altsettings,
+ * this audio_source function *MUST* implement a get_alt() method.
+ */
+static int audio_get_alt(struct usb_function *f, unsigned int intf)
+{
+	struct audio_dev	*audio = func_to_audio(f);
+
+	return audio->in_ep->enabled ? 1 : 0;
 }
 
 static void audio_disable(struct usb_function *f)
@@ -755,10 +800,10 @@ static int audio_pcm_close(struct snd_pcm_substream *substream)
 	struct audio_dev *audio = substream->private_data;
 	unsigned long flags;
 
-	spin_lock_irqsave(&audio->lock, flags);
-
 	/* Remove the QoS request */
 	pm_qos_remove_request(&audio->pm_qos);
+
+	spin_lock_irqsave(&audio->lock, flags);
 
 	audio->substream = NULL;
 	spin_unlock_irqrestore(&audio->lock, flags);
@@ -841,6 +886,7 @@ static struct audio_dev _audio_dev = {
 		.bind = audio_bind,
 		.unbind = audio_unbind,
 		.set_alt = audio_set_alt,
+		.get_alt = audio_get_alt,
 		.setup = audio_setup,
 		.disable = audio_disable,
 		.free_func = audio_free_func,
@@ -1000,6 +1046,7 @@ static ssize_t audio_source_pcm_show(struct device *dev,
 
 struct device *create_function_device(char *name);
 
+#define AUDIO_SOURCE_DEV_NAME_LENGTH 20
 static struct usb_function_instance *audio_source_alloc_inst(void)
 {
 	struct audio_source_instance *fi_audio;
@@ -1008,6 +1055,8 @@ static struct usb_function_instance *audio_source_alloc_inst(void)
 	struct device *dev;
 	void *err_ptr;
 	int err = 0;
+	char device_name[AUDIO_SOURCE_DEV_NAME_LENGTH];
+	static u8 count;
 
 	fi_audio = kzalloc(sizeof(*fi_audio), GFP_KERNEL);
 	if (!fi_audio)
@@ -1025,7 +1074,17 @@ static struct usb_function_instance *audio_source_alloc_inst(void)
 
 	config_group_init_type_name(&fi_audio->func_inst.group, "",
 						&audio_source_func_type);
-	dev = create_function_device("f_audio_source");
+
+	if (!count) {
+		snprintf(device_name, AUDIO_SOURCE_DEV_NAME_LENGTH,
+					"f_audio_source");
+		count++;
+	} else {
+		snprintf(device_name, AUDIO_SOURCE_DEV_NAME_LENGTH,
+					"f_audio_source%d", count++);
+	}
+
+	dev = create_function_device(device_name);
 
 	if (IS_ERR(dev)) {
 		err_ptr = dev;

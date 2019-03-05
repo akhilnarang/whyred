@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -33,17 +34,33 @@ static int msm_framebuffer_create_handle(struct drm_framebuffer *fb,
 		struct drm_file *file_priv,
 		unsigned int *handle)
 {
-	struct msm_framebuffer *msm_fb = to_msm_framebuffer(fb);
+	struct msm_framebuffer *msm_fb;
+
+	if (!fb) {
+		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
+		return -EINVAL;
+	}
+
+	msm_fb = to_msm_framebuffer(fb);
+
 	return drm_gem_handle_create(file_priv,
 			msm_fb->planes[0], handle);
 }
 
 static void msm_framebuffer_destroy(struct drm_framebuffer *fb)
 {
-	struct msm_framebuffer *msm_fb = to_msm_framebuffer(fb);
-	int i, n = drm_format_num_planes(fb->pixel_format);
+	struct msm_framebuffer *msm_fb;
+	int i, n;
 
-	DBG("destroy: FB ID: %d (%p)", fb->base.id, fb);
+	if (!fb) {
+		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
+		return;
+	}
+
+	msm_fb = to_msm_framebuffer(fb);
+	n = drm_format_num_planes(fb->pixel_format);
+
+	DBG("destroy: FB ID: %d (%pK)", fb->base.id, fb);
 
 	drm_framebuffer_cleanup(fb);
 
@@ -72,9 +89,16 @@ static const struct drm_framebuffer_funcs msm_framebuffer_funcs = {
 #ifdef CONFIG_DEBUG_FS
 void msm_framebuffer_describe(struct drm_framebuffer *fb, struct seq_file *m)
 {
-	struct msm_framebuffer *msm_fb = to_msm_framebuffer(fb);
-	int i, n = drm_format_num_planes(fb->pixel_format);
+	struct msm_framebuffer *msm_fb;
+	int i, n;
 
+	if (!fb) {
+		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
+		return;
+	}
+
+	msm_fb = to_msm_framebuffer(fb);
+	n = drm_format_num_planes(fb->pixel_format);
 	seq_printf(m, "fb: %dx%d@%4.4s (%2d, ID:%d)\n",
 			fb->width, fb->height, (char *)&fb->pixel_format,
 			fb->refcount.refcount.counter, fb->base.id);
@@ -92,15 +116,23 @@ void msm_framebuffer_describe(struct drm_framebuffer *fb, struct seq_file *m)
  * should be fine, since only the scanout (mdpN) side of things needs
  * this, the gpu doesn't care about fb's.
  */
-int msm_framebuffer_prepare(struct drm_framebuffer *fb, int id)
+int msm_framebuffer_prepare(struct drm_framebuffer *fb,
+		struct msm_gem_address_space *aspace)
 {
-	struct msm_framebuffer *msm_fb = to_msm_framebuffer(fb);
-	int ret, i, n = drm_format_num_planes(fb->pixel_format);
-	uint32_t iova;
+	struct msm_framebuffer *msm_fb;
+	int ret, i, n;
+	uint64_t iova;
 
+	if (!fb) {
+		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
+		return -EINVAL;
+	}
+
+	msm_fb = to_msm_framebuffer(fb);
+	n = drm_format_num_planes(fb->pixel_format);
 	for (i = 0; i < n; i++) {
-		ret = msm_gem_get_iova(msm_fb->planes[i], id, &iova);
-		DBG("FB[%u]: iova[%d]: %08x (%d)", fb->base.id, i, iova, ret);
+		ret = msm_gem_get_iova(msm_fb->planes[i], aspace, &iova);
+		DBG("FB[%u]: iova[%d]: %08llx (%d)", fb->base.id, i, iova, ret);
 		if (ret)
 			return ret;
 	}
@@ -108,33 +140,62 @@ int msm_framebuffer_prepare(struct drm_framebuffer *fb, int id)
 	return 0;
 }
 
-void msm_framebuffer_cleanup(struct drm_framebuffer *fb, int id)
+void msm_framebuffer_cleanup(struct drm_framebuffer *fb,
+		struct msm_gem_address_space *aspace)
 {
-	struct msm_framebuffer *msm_fb = to_msm_framebuffer(fb);
-	int i, n = drm_format_num_planes(fb->pixel_format);
+	struct msm_framebuffer *msm_fb;
+	int i, n;
+
+	if (fb == NULL) {
+		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
+		return;
+	}
+
+	msm_fb = to_msm_framebuffer(fb);
+	n = drm_format_num_planes(fb->pixel_format);
 
 	for (i = 0; i < n; i++)
-		msm_gem_put_iova(msm_fb->planes[i], id);
+		msm_gem_put_iova(msm_fb->planes[i], aspace);
 }
 
-uint32_t msm_framebuffer_iova(struct drm_framebuffer *fb, int id, int plane)
+/* FIXME: Leave this as a uint32_t and just return the lower 32 bits? */
+uint32_t msm_framebuffer_iova(struct drm_framebuffer *fb,
+		struct msm_gem_address_space *aspace, int plane)
 {
-	struct msm_framebuffer *msm_fb = to_msm_framebuffer(fb);
+	struct msm_framebuffer *msm_fb;
+	uint64_t iova;
+
+	if (!fb) {
+		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
+		return -EINVAL;
+	}
+
+	msm_fb = to_msm_framebuffer(fb);
 	if (!msm_fb->planes[plane])
 		return 0;
-	return msm_gem_iova(msm_fb->planes[plane], id) + fb->offsets[plane];
+
+	iova = msm_gem_iova(msm_fb->planes[plane], aspace) + fb->offsets[plane];
+
+	/* FIXME: Make sure it is < 32 bits */
+	return lower_32_bits(iova);
 }
 
 struct drm_gem_object *msm_framebuffer_bo(struct drm_framebuffer *fb, int plane)
 {
-	struct msm_framebuffer *msm_fb = to_msm_framebuffer(fb);
+	struct msm_framebuffer *msm_fb;
+
+	if (!fb) {
+		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
+		return ERR_PTR(-EINVAL);
+	}
+
+	msm_fb = to_msm_framebuffer(fb);
 	return msm_fb->planes[plane];
 }
 
 const struct msm_format *msm_framebuffer_format(struct drm_framebuffer *fb)
 {
-	struct msm_framebuffer *msm_fb = to_msm_framebuffer(fb);
-	return msm_fb->format;
+	return fb ? (to_msm_framebuffer(fb))->format : NULL;
 }
 
 struct drm_framebuffer *msm_framebuffer_create(struct drm_device *dev,
@@ -175,18 +236,20 @@ struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
 	struct msm_framebuffer *msm_fb = NULL;
 	struct drm_framebuffer *fb;
 	const struct msm_format *format;
-	int ret, i, n;
+	int ret, i, num_planes;
 	unsigned int hsub, vsub;
+	bool is_modified = false;
 
-	DBG("create framebuffer: dev=%p, mode_cmd=%p (%dx%d@%4.4s)",
+	DBG("create framebuffer: dev=%pK, mode_cmd=%pK (%dx%d@%4.4s)",
 			dev, mode_cmd, mode_cmd->width, mode_cmd->height,
 			(char *)&mode_cmd->pixel_format);
 
-	n = drm_format_num_planes(mode_cmd->pixel_format);
+	num_planes = drm_format_num_planes(mode_cmd->pixel_format);
 	hsub = drm_format_horz_chroma_subsampling(mode_cmd->pixel_format);
 	vsub = drm_format_vert_chroma_subsampling(mode_cmd->pixel_format);
 
-	format = kms->funcs->get_format(kms, mode_cmd->pixel_format);
+	format = kms->funcs->get_format(kms, mode_cmd->pixel_format,
+			mode_cmd->modifier, num_planes);
 	if (!format) {
 		dev_err(dev->dev, "unsupported pixel format: %4.4s\n",
 				(char *)&mode_cmd->pixel_format);
@@ -204,27 +267,53 @@ struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
 
 	msm_fb->format = format;
 
-	if (n > ARRAY_SIZE(msm_fb->planes)) {
+	if (mode_cmd->flags & DRM_MODE_FB_MODIFIERS) {
+		for (i = 0; i < ARRAY_SIZE(mode_cmd->modifier); i++) {
+			if (mode_cmd->modifier[i]) {
+				is_modified = true;
+				break;
+			}
+		}
+	}
+
+	if (num_planes > ARRAY_SIZE(msm_fb->planes)) {
 		ret = -EINVAL;
 		goto fail;
 	}
 
-	for (i = 0; i < n; i++) {
-		unsigned int width = mode_cmd->width / (i ? hsub : 1);
-		unsigned int height = mode_cmd->height / (i ? vsub : 1);
-		unsigned int min_size;
-
-		min_size = (height - 1) * mode_cmd->pitches[i]
-			 + width * drm_format_plane_cpp(mode_cmd->pixel_format, i)
-			 + mode_cmd->offsets[i];
-
-		if (bos[i]->size < min_size) {
+	if (is_modified) {
+		if (!kms->funcs->check_modified_format) {
+			dev_err(dev->dev, "can't check modified fb format\n");
 			ret = -EINVAL;
 			goto fail;
+		} else {
+			ret = kms->funcs->check_modified_format(
+				kms, msm_fb->format, mode_cmd, bos);
+			if (ret)
+				goto fail;
 		}
+	} else {
+		for (i = 0; i < num_planes; i++) {
+			unsigned int width = mode_cmd->width / (i ? hsub : 1);
+			unsigned int height = mode_cmd->height / (i ? vsub : 1);
+			unsigned int min_size;
+			unsigned int cpp;
 
-		msm_fb->planes[i] = bos[i];
+			cpp = drm_format_plane_cpp(mode_cmd->pixel_format, i);
+
+			min_size = (height - 1) * mode_cmd->pitches[i]
+				 + width * cpp
+				 + mode_cmd->offsets[i];
+
+			if (bos[i]->size < min_size) {
+				ret = -EINVAL;
+				goto fail;
+			}
+		}
 	}
+
+	for (i = 0; i < num_planes; i++)
+		msm_fb->planes[i] = bos[i];
 
 	drm_helper_mode_fill_fb_struct(fb, mode_cmd);
 
@@ -234,7 +323,7 @@ struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
 		goto fail;
 	}
 
-	DBG("create: FB ID: %d (%p)", fb->base.id, fb);
+	DBG("create: FB ID: %d (%pK)", fb->base.id, fb);
 
 	return fb;
 

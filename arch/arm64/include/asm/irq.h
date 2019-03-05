@@ -47,6 +47,9 @@ static inline int nr_legacy_irqs(void)
 	return 0;
 }
 
+void arch_trigger_all_cpu_backtrace(void);
+#define arch_trigger_all_cpu_backtrace arch_trigger_all_cpu_backtrace
+
 static inline bool on_irq_stack(unsigned long sp, int cpu)
 {
 	/* variable names the same as kernel/stacktrace.c */

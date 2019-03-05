@@ -175,6 +175,36 @@ config THERMAL_EMULATION
 	  because userland can easily disable the thermal policy by simply
 	  flooding this sysfs node with low temperature values.
 
+config LIMITS_MONITOR
+	bool "LMH monitor driver"
+	depends on THERMAL
+	help
+	  Enable this to manage the limits hardware for interrupts, throttling
+	  intensities, and LMH device profiles. This driver also registers the
+	  Limits hardware's monitoring entities as sensors with the thermal
+	  framework.
+
+config LIMITS_LITE_HW
+	bool "LMH Lite hardware driver"
+	depends on LIMITS_MONITOR
+	help
+	 Enable this option for interacting with LMH Lite hardware. This
+	 implements the APIs required for getting the details about sensors
+	 supported by LMH Lite, their throttling intensity and the operating
+	 profiles.
+
+config THERMAL_MONITOR
+	bool "Monitor thermal state and limit CPU Frequency"
+	depends on THERMAL_TSENS8974
+	depends on CPU_FREQ || CPU_FREQ_MSM
+	depends on PM_OPP
+	default n
+	help
+	  This enables thermal monitoring capability in the kernel in the
+	  absence of a system wide thermal monitoring entity or until such an
+	  entity starts running in the userspace. Monitors TSENS temperature
+	  and limits the max frequency of the cores.
+
 config HISI_THERMAL
 	tristate "Hisilicon thermal driver"
 	depends on (ARCH_HISI && CPU_THERMAL && OF) || COMPILE_TEST
@@ -182,6 +212,16 @@ config HISI_THERMAL
 	  Enable this to plug hisilicon's thermal sensor driver into the Linux
 	  thermal framework. cpufreq is used as the cooling device to throttle
 	  CPUs when the passive trip is crossed.
+
+config THERMAL_TSENS8974
+	tristate "Qualcomm 8974 TSENS Temperature driver"
+	depends on THERMAL
+	help
+	  This enables the thermal sysfs driver for the TSENS device. It shows
+	  up in Sysfs as a thermal zone with multiple trip points. Also able
+	  to set threshold temperature for both warm and cool and update
+	  thermal userspace client when a threshold is reached. Warm/Cool
+	  temperature thresholds can be set independently for each sensor.
 
 config IMX_THERMAL
 	tristate "Temperature sensor driver for Freescale i.MX SoCs"
@@ -364,6 +404,42 @@ config INTEL_PCH_THERMAL
 	  Enable this to support thermal reporting on certain intel PCHs.
 	  Thermal reporting device will provide temperature reading,
 	  programmable trip points and other information.
+
+config THERMAL_QPNP
+	tristate "Qualcomm Technologies, Inc. QPNP PMIC Temperature Alarm"
+	depends on OF && SPMI
+	help
+	  This enables a thermal Sysfs driver for Qualcomm Technologies, Inc.
+	  QPNP PMIC devices. It shows up in Sysfs as a thermal zone with
+	  multiple trip points. The temperature reported by the thermal zone
+	  reflects the real time die temperature if an ADC is present or an
+	  estimate of the temperature based upon the over temperature stage
+	  value if no ADC is available. If allowed via compile time
+	  configuration; enabling the thermal zone device via the mode file
+	  results in shifting PMIC over temperature shutdown control from
+	  hardware to software.
+
+config THERMAL_QPNP_ADC_TM
+	tristate "Qualcomm 8974 Thermal Monitor ADC Driver"
+	depends on THERMAL
+	depends on  SPMI
+	help
+	  This enables the thermal Sysfs driver for the ADC thermal monitoring
+	  device. It shows up in Sysfs as a thermal zone with multiple trip points.
+	  Disabling the thermal zone device via the mode file results in disabling
+	  the sensor. Also able to set threshold temperature for both hot and cold
+	  and update when a threshold is reached.
+
+config QCOM_THERMAL_LIMITS_DCVS
+	bool "QTI LMH DCVS Driver"
+	depends on THERMAL && ARCH_QCOM
+	depends on OF
+	help
+	  This enables the driver for Limits Management Hardware - DCVS block
+	  for the application processors. The h/w block that is available for
+	  each cluster can be used to peform quick thermal mitigations by
+	  tracking temperatures of the CPUs and taking thermal action in the
+	  hardware without s/w intervention.
 
 menu "Texas Instruments thermal drivers"
 depends on ARCH_HAS_BANDGAP || COMPILE_TEST

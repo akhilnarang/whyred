@@ -235,6 +235,8 @@ struct pmu {
 	atomic_t			exclusive_cnt; /* < 0: cpu; > 0: tsk */
 	int				task_ctx_nr;
 	int				hrtimer_interval_ms;
+	u32                             events_across_hotplug:1,
+					reserved:31;
 
 	/*
 	 * Fully disable/enable this PMU, can be used to protect from the PMI
@@ -379,7 +381,7 @@ struct pmu {
 	/*
 	 * Set up pmu-private data structures for an AUX area
 	 */
-	void *(*setup_aux)		(int cpu, void **pages,
+	void *(*setup_aux)		(struct perf_event *event, void **pages,
 					 int nr_pages, bool overwrite);
 					/* optional */
 
@@ -392,6 +394,14 @@ struct pmu {
 	 * Filter events for PMU-specific reasons.
 	 */
 	int (*filter_match)		(struct perf_event *event); /* optional */
+
+	/*
+	 * Initial, PMU driver specific configuration.
+	 */
+	int (*get_drv_configs)		(struct perf_event *event,
+					 void __user *arg); /* optional */
+	void (*free_drv_configs)	(struct perf_event *event);
+					/* optional */
 };
 
 /**
@@ -467,6 +477,12 @@ struct perf_event {
 	int				nr_siblings;
 	int				group_flags;
 	struct perf_event		*group_leader;
+
+	/*
+	 * Protect the pmu, attributes and context of a group leader.
+	 * Note: does not protect the pointer to the group_leader.
+	 */
+	struct mutex			group_leader_mutex;
 	struct pmu			*pmu;
 
 	enum perf_event_active_state	state;
@@ -559,6 +575,7 @@ struct perf_event {
 	struct irq_work			pending;
 
 	atomic_t			event_limit;
+	struct list_head		drv_configs;
 
 	void (*destroy)(struct perf_event *);
 	struct rcu_head			rcu_head;
@@ -754,6 +771,7 @@ extern u64 perf_event_read_local(struct perf_event *event);
 extern u64 perf_event_read_value(struct perf_event *event,
 				 u64 *enabled, u64 *running);
 
+extern struct dentry *perf_create_debug_dir(void);
 
 struct perf_sample_data {
 	/*

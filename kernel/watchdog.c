@@ -13,6 +13,7 @@
 
 #include <linux/mm.h>
 #include <linux/cpu.h>
+#include <linux/device.h>
 #include <linux/nmi.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -20,11 +21,13 @@
 #include <linux/smpboot.h>
 #include <linux/sched/rt.h>
 #include <linux/tick.h>
+#include <linux/workqueue.h>
 
 #include <asm/irq_regs.h>
 #include <linux/kvm_para.h>
 #include <linux/perf_event.h>
 #include <linux/kthread.h>
+#include <soc/qcom/watchdog.h>
 
 /*
  * The run state of the lockup detectors is controlled by the content of the
@@ -94,6 +97,7 @@ static u64 __read_mostly sample_period;
 static DEFINE_PER_CPU(unsigned long, watchdog_touch_ts);
 static DEFINE_PER_CPU(struct task_struct *, softlockup_watchdog);
 static DEFINE_PER_CPU(struct hrtimer, watchdog_hrtimer);
+static DEFINE_PER_CPU(unsigned int, watchdog_en);
 static DEFINE_PER_CPU(bool, softlockup_touch_sync);
 static DEFINE_PER_CPU(bool, soft_watchdog_warn);
 static DEFINE_PER_CPU(unsigned long, hrtimer_interrupts);
@@ -230,13 +234,27 @@ static void __touch_watchdog(void)
 	__this_cpu_write(watchdog_touch_ts, get_timestamp());
 }
 
-void touch_softlockup_watchdog(void)
+/**
+ * touch_softlockup_watchdog_sched - touch watchdog on scheduler stalls
+ *
+ * Call when the scheduler may have stalled for legitimate reasons
+ * preventing the watchdog task from executing - e.g. the scheduler
+ * entering idle state.  This should only be used for scheduler events.
+ * Use touch_softlockup_watchdog() for everything else.
+ */
+void touch_softlockup_watchdog_sched(void)
 {
 	/*
 	 * Preemption can be enabled.  It doesn't matter which CPU's timestamp
 	 * gets zeroed here, so use the raw_ operation.
 	 */
 	raw_cpu_write(watchdog_touch_ts, 0);
+}
+
+void touch_softlockup_watchdog(void)
+{
+	touch_softlockup_watchdog_sched();
+	wq_watchdog_touch(raw_smp_processor_id());
 }
 EXPORT_SYMBOL(touch_softlockup_watchdog);
 
@@ -251,6 +269,7 @@ void touch_all_softlockup_watchdogs(void)
 	 */
 	for_each_watchdog_cpu(cpu)
 		per_cpu(watchdog_touch_ts, cpu) = 0;
+	wq_watchdog_touch(-1);
 }
 
 #ifdef CONFIG_HARDLOCKUP_DETECTOR
@@ -346,8 +365,11 @@ static void watchdog_check_hardlockup_other_cpu(void)
 		if (per_cpu(hard_watchdog_warn, next_cpu) == true)
 			return;
 
-		if (hardlockup_panic)
-			panic("Watchdog detected hard LOCKUP on cpu %u", next_cpu);
+		if (hardlockup_panic) {
+			pr_err("Watchdog detected hard LOCKUP on cpu %u",
+					next_cpu);
+			msm_trigger_wdog_bite();
+		}
 		else
 			WARN(1, "Watchdog detected hard LOCKUP on cpu %u", next_cpu);
 
@@ -409,6 +431,9 @@ static void watchdog_overflow_callback(struct perf_event *event,
 			return;
 
 		pr_emerg("Watchdog detected hard LOCKUP on cpu %d", this_cpu);
+		if (hardlockup_panic)
+			msm_trigger_wdog_bite();
+
 		print_modules();
 		print_irqtrace_events(current);
 		if (regs)
@@ -531,6 +556,9 @@ static enum hrtimer_restart watchdog_timer_fn(struct hrtimer *hrtimer)
 		pr_emerg("BUG: soft lockup - CPU#%d stuck for %us! [%s:%d]\n",
 			smp_processor_id(), duration,
 			current->comm, task_pid_nr(current));
+
+		if (softlockup_panic)
+			msm_trigger_wdog_bite();
 		__this_cpu_write(softlockup_task_ptr_saved, current);
 		print_modules();
 		print_irqtrace_events(current);
@@ -567,9 +595,13 @@ static void watchdog_set_prio(unsigned int policy, unsigned int prio)
 	sched_setscheduler(current, policy, &param);
 }
 
-static void watchdog_enable(unsigned int cpu)
+void watchdog_enable(unsigned int cpu)
 {
 	struct hrtimer *hrtimer = raw_cpu_ptr(&watchdog_hrtimer);
+	unsigned int *enabled = raw_cpu_ptr(&watchdog_en);
+
+	if (*enabled)
+		return;
 
 	/* kick off the timer for the hardlockup detector */
 	hrtimer_init(hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
@@ -585,16 +617,40 @@ static void watchdog_enable(unsigned int cpu)
 	/* initialize timestamp */
 	watchdog_set_prio(SCHED_FIFO, MAX_RT_PRIO - 1);
 	__touch_watchdog();
+
+	/*
+	 * Need to ensure above operations are observed by other CPUs before
+	 * indicating that timer is enabled. This is to synchronize core
+	 * isolation and hotplug. Core isolation will wait for this flag to be
+	 * set.
+	 */
+	mb();
+	*enabled = 1;
 }
 
-static void watchdog_disable(unsigned int cpu)
+void watchdog_disable(unsigned int cpu)
 {
 	struct hrtimer *hrtimer = raw_cpu_ptr(&watchdog_hrtimer);
+	unsigned int *enabled = raw_cpu_ptr(&watchdog_en);
+
+	if (!*enabled)
+		return;
 
 	watchdog_set_prio(SCHED_NORMAL, 0);
 	hrtimer_cancel(hrtimer);
 	/* disable the perf event */
 	watchdog_nmi_disable(cpu);
+
+	/*
+	 * No need for barrier here since disabling the watchdog is
+	 * synchronized with hotplug lock
+	 */
+	*enabled = 0;
+}
+
+bool watchdog_configured(unsigned int cpu)
+{
+	return *per_cpu_ptr(&watchdog_en, cpu);
 }
 
 static void watchdog_cleanup(unsigned int cpu, bool online)

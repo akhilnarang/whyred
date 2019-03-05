@@ -826,6 +826,11 @@ ip_local_reserved_ports - list of comma separated ranges
 
 	Default: Empty
 
+reserved_port_bind - BOOLEAN
+	If set, allows explicit bind requests to applications requesting
+	any port within the range of ip_local_reserved_ports.
+	Default: 1
+
 ip_nonlocal_bind - BOOLEAN
 	If set, allows processes to bind() to non-local IP addresses,
 	which can be quite useful - but may break some applications.
@@ -1231,6 +1236,10 @@ igmp_link_local_mcast_reports - BOOLEAN
 	224.0.0.X range.
 	Default TRUE
 
+nf_ipv4_defrag_skip - BOOLEAN
+	Skip defragmentation per interface if set.
+	Default : 0 (always defrag)
+
 Alexey Kuznetsov.
 kuznet@ms2.inr.ac.ru
 
@@ -1440,6 +1449,11 @@ accept_ra_mtu - BOOLEAN
 
 	Functional default: enabled if accept_ra is enabled.
 			    disabled if accept_ra is disabled.
+
+accept_ra_prefix_route - BOOLEAN
+	Set the prefix route for the autoconfigured interface address
+
+	Functional default: enabled
 
 accept_redirects - BOOLEAN
 	Accept Redirects.

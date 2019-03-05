@@ -23,13 +23,14 @@
 #include <linux/err.h>
 #include <linux/of.h>
 #include <linux/types.h>
-#include <linux/scatterlist.h>
 #include <trace/events/iommu.h>
 
 #define IOMMU_READ	(1 << 0)
 #define IOMMU_WRITE	(1 << 1)
 #define IOMMU_CACHE	(1 << 2) /* DMA cache coherency */
 #define IOMMU_NOEXEC	(1 << 3)
+#define IOMMU_PRIV	(1 << 4)
+#define IOMMU_DEVICE	(1 << 5) /* Indicates access to device memory */
 
 struct iommu_ops;
 struct iommu_group;
@@ -39,8 +40,12 @@ struct iommu_domain;
 struct notifier_block;
 
 /* iommu fault flags */
-#define IOMMU_FAULT_READ	0x0
-#define IOMMU_FAULT_WRITE	0x1
+#define IOMMU_FAULT_READ                (1 << 0)
+#define IOMMU_FAULT_WRITE               (1 << 1)
+#define IOMMU_FAULT_TRANSLATION         (1 << 2)
+#define IOMMU_FAULT_PERMISSION          (1 << 3)
+#define IOMMU_FAULT_EXTERNAL            (1 << 4)
+#define IOMMU_FAULT_TRANSACTION_STALLED (1 << 5)
 
 typedef int (*iommu_fault_handler_t)(struct iommu_domain *,
 			struct device *, unsigned long, int, void *);
@@ -49,6 +54,10 @@ struct iommu_domain_geometry {
 	dma_addr_t aperture_start; /* First address that can be mapped    */
 	dma_addr_t aperture_end;   /* Last address that can be mapped     */
 	bool force_aperture;       /* DMA only allowed in mappable range? */
+};
+
+struct iommu_pgtbl_info {
+	void *pmds;
 };
 
 /* Domain feature flags */
@@ -112,8 +121,27 @@ enum iommu_attr {
 	DOMAIN_ATTR_FSL_PAMU_ENABLE,
 	DOMAIN_ATTR_FSL_PAMUV1,
 	DOMAIN_ATTR_NESTING,	/* two stages of translation */
+	DOMAIN_ATTR_PT_BASE_ADDR,
+	DOMAIN_ATTR_SECURE_VMID,
+	DOMAIN_ATTR_ATOMIC,
+	DOMAIN_ATTR_CONTEXT_BANK,
+	DOMAIN_ATTR_TTBR0,
+	DOMAIN_ATTR_CONTEXTIDR,
+	DOMAIN_ATTR_PROCID,
+	DOMAIN_ATTR_DYNAMIC,
+	DOMAIN_ATTR_NON_FATAL_FAULTS,
+	DOMAIN_ATTR_S1_BYPASS,
+	DOMAIN_ATTR_FAST,
+	DOMAIN_ATTR_PGTBL_INFO,
+	DOMAIN_ATTR_EARLY_MAP,
+	DOMAIN_ATTR_PAGE_TABLE_IS_COHERENT,
+	DOMAIN_ATTR_PAGE_TABLE_FORCE_COHERENT,
+	DOMAIN_ATTR_ENABLE_TTBR1,
+	DOMAIN_ATTR_CB_STALL_DISABLE,
 	DOMAIN_ATTR_MAX,
 };
+
+extern struct dentry *iommu_debugfs_top;
 
 /**
  * struct iommu_dm_region - descriptor for a direct mapped memory region
@@ -142,12 +170,21 @@ struct iommu_dm_region {
  * @map_sg: map a scatter-gather list of physically contiguous memory chunks
  * to an iommu domain
  * @iova_to_phys: translate iova to physical address
+ * @iova_to_phys_hard: translate iova to physical address using IOMMU hardware
  * @add_device: add device to iommu grouping
  * @remove_device: remove device from iommu grouping
  * @domain_get_attr: Query domain attributes
  * @domain_set_attr: Change domain attributes
  * @of_xlate: add OF master IDs to iommu grouping
  * @pgsize_bitmap: bitmap of supported page sizes
+ * @get_pgsize_bitmap: gets a bitmap of supported page sizes for a domain
+ *                     This takes precedence over @pgsize_bitmap.
+ * @trigger_fault: trigger a fault on the device attached to an iommu domain
+ * @reg_read: read an IOMMU register
+ * @reg_write: write an IOMMU register
+ * @tlbi_domain: Invalidate all TLBs covering an iommu domain
+ * @enable_config_clocks: Enable all config clocks for this domain's IOMMU
+ * @disable_config_clocks: Disable all config clocks for this domain's IOMMU
  * @priv: per-instance data private to the iommu driver
  */
 struct iommu_ops {
@@ -166,6 +203,8 @@ struct iommu_ops {
 	size_t (*map_sg)(struct iommu_domain *domain, unsigned long iova,
 			 struct scatterlist *sg, unsigned int nents, int prot);
 	phys_addr_t (*iova_to_phys)(struct iommu_domain *domain, dma_addr_t iova);
+	phys_addr_t (*iova_to_phys_hard)(struct iommu_domain *domain,
+					 dma_addr_t iova);
 	int (*add_device)(struct device *dev);
 	void (*remove_device)(struct device *dev);
 	struct iommu_group *(*device_group)(struct device *dev);
@@ -186,11 +225,25 @@ struct iommu_ops {
 	int (*domain_set_windows)(struct iommu_domain *domain, u32 w_count);
 	/* Get the numer of window per domain */
 	u32 (*domain_get_windows)(struct iommu_domain *domain);
+	int (*dma_supported)(struct iommu_domain *domain, struct device *dev,
+			     u64 mask);
+	void (*trigger_fault)(struct iommu_domain *domain, unsigned long flags);
+	unsigned long (*reg_read)(struct iommu_domain *domain,
+				  unsigned long offset);
+	void (*reg_write)(struct iommu_domain *domain, unsigned long val,
+			  unsigned long offset);
+	void (*tlbi_domain)(struct iommu_domain *domain);
+	int (*enable_config_clocks)(struct iommu_domain *domain);
+	void (*disable_config_clocks)(struct iommu_domain *domain);
+	uint64_t (*iova_to_pte)(struct iommu_domain *domain,
+			 dma_addr_t iova);
 
 #ifdef CONFIG_OF_IOMMU
 	int (*of_xlate)(struct device *dev, struct of_phandle_args *args);
 #endif
 
+	unsigned long (*get_pgsize_bitmap)(struct iommu_domain *domain);
+	bool (*is_iova_coherent)(struct iommu_domain *domain, dma_addr_t iova);
 	unsigned long pgsize_bitmap;
 	void *priv;
 };
@@ -212,17 +265,31 @@ extern int iommu_attach_device(struct iommu_domain *domain,
 			       struct device *dev);
 extern void iommu_detach_device(struct iommu_domain *domain,
 				struct device *dev);
+extern size_t iommu_pgsize(unsigned long pgsize_bitmap,
+			   unsigned long addr_merge, size_t size);
 extern struct iommu_domain *iommu_get_domain_for_dev(struct device *dev);
 extern int iommu_map(struct iommu_domain *domain, unsigned long iova,
 		     phys_addr_t paddr, size_t size, int prot);
 extern size_t iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 		       size_t size);
+extern int iommu_unmap_range(struct iommu_domain *domain, unsigned int iova,
+		      unsigned int len);
 extern size_t default_iommu_map_sg(struct iommu_domain *domain, unsigned long iova,
 				struct scatterlist *sg,unsigned int nents,
 				int prot);
 extern phys_addr_t iommu_iova_to_phys(struct iommu_domain *domain, dma_addr_t iova);
+extern phys_addr_t iommu_iova_to_phys_hard(struct iommu_domain *domain,
+					   dma_addr_t iova);
+extern bool iommu_is_iova_coherent(struct iommu_domain *domain,
+				dma_addr_t iova);
 extern void iommu_set_fault_handler(struct iommu_domain *domain,
 			iommu_fault_handler_t handler, void *token);
+extern void iommu_trigger_fault(struct iommu_domain *domain,
+				unsigned long flags);
+extern unsigned long iommu_reg_read(struct iommu_domain *domain,
+				    unsigned long offset);
+extern void iommu_reg_write(struct iommu_domain *domain, unsigned long offset,
+			    unsigned long val);
 
 extern void iommu_get_dm_regions(struct device *dev, struct list_head *list);
 extern void iommu_put_dm_regions(struct device *dev, struct list_head *list);
@@ -269,6 +336,9 @@ extern int iommu_domain_window_enable(struct iommu_domain *domain, u32 wnd_nr,
 				      phys_addr_t offset, u64 size,
 				      int prot);
 extern void iommu_domain_window_disable(struct iommu_domain *domain, u32 wnd_nr);
+
+extern uint64_t iommu_iova_to_pte(struct iommu_domain *domain,
+	    dma_addr_t iova);
 /**
  * report_iommu_fault() - report about an IOMMU fault to the IOMMU framework
  * @domain: the iommu domain where the fault has happened
@@ -292,6 +362,11 @@ extern void iommu_domain_window_disable(struct iommu_domain *domain, u32 wnd_nr)
  * Specifically, -ENOSYS is returned if a fault handler isn't installed
  * (though fault handlers can also return -ENOSYS, in case they want to
  * elicit the default behavior of the IOMMU drivers).
+
+ * Client fault handler returns -EBUSY to signal to the IOMMU driver
+ * that the client will take responsibility for any further fault
+ * handling, including clearing fault status registers or retrying
+ * the faulting transaction.
  */
 static inline int report_iommu_fault(struct iommu_domain *domain,
 		struct device *dev, unsigned long iova, int flags)
@@ -314,13 +389,40 @@ static inline size_t iommu_map_sg(struct iommu_domain *domain,
 				  unsigned long iova, struct scatterlist *sg,
 				  unsigned int nents, int prot)
 {
-	return domain->ops->map_sg(domain, iova, sg, nents, prot);
+	size_t ret;
+
+	trace_map_sg_start(iova, nents);
+	ret = domain->ops->map_sg(domain, iova, sg, nents, prot);
+	trace_map_sg_end(iova, nents);
+	return ret;
 }
+
+extern int iommu_dma_supported(struct iommu_domain *domain, struct device *dev,
+			       u64 mask);
 
 /* PCI device grouping function */
 extern struct iommu_group *pci_device_group(struct device *dev);
 /* Generic device grouping function */
 extern struct iommu_group *generic_device_group(struct device *dev);
+
+static inline void iommu_tlbiall(struct iommu_domain *domain)
+{
+	if (domain->ops->tlbi_domain)
+		domain->ops->tlbi_domain(domain);
+}
+
+static inline int iommu_enable_config_clocks(struct iommu_domain *domain)
+{
+	if (domain->ops->enable_config_clocks)
+		return domain->ops->enable_config_clocks(domain);
+	return 0;
+}
+
+static inline void iommu_disable_config_clocks(struct iommu_domain *domain)
+{
+	if (domain->ops->disable_config_clocks)
+		domain->ops->disable_config_clocks(domain);
+}
 
 #else /* CONFIG_IOMMU_API */
 
@@ -379,6 +481,12 @@ static inline int iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 	return -ENODEV;
 }
 
+static inline int iommu_unmap_range(struct iommu_domain *domain,
+				unsigned int iova, unsigned int len)
+{
+	return -ENODEV;
+}
+
 static inline size_t iommu_map_sg(struct iommu_domain *domain,
 				  unsigned long iova, struct scatterlist *sg,
 				  unsigned int nents, int prot)
@@ -403,8 +511,36 @@ static inline phys_addr_t iommu_iova_to_phys(struct iommu_domain *domain, dma_ad
 	return 0;
 }
 
+static inline phys_addr_t iommu_iova_to_phys_hard(struct iommu_domain *domain,
+						  dma_addr_t iova)
+{
+	return 0;
+}
+
+static inline bool iommu_is_iova_coherent(struct iommu_domain *domain,
+					  dma_addr_t iova)
+{
+	return 0;
+}
+
 static inline void iommu_set_fault_handler(struct iommu_domain *domain,
 				iommu_fault_handler_t handler, void *token)
+{
+}
+
+static inline void iommu_trigger_fault(struct iommu_domain *domain,
+				       unsigned long flags)
+{
+}
+
+static inline unsigned long iommu_reg_read(struct iommu_domain *domain,
+					   unsigned long offset)
+{
+	return 0;
+}
+
+static inline void iommu_reg_write(struct iommu_domain *domain,
+				   unsigned long val, unsigned long offset)
 {
 }
 
@@ -529,6 +665,25 @@ static inline int iommu_device_link(struct device *dev, struct device *link)
 }
 
 static inline void iommu_device_unlink(struct device *dev, struct device *link)
+{
+}
+
+static inline int iommu_dma_supported(struct iommu_domain *domain,
+				      struct device *dev, u64 mask)
+{
+	return -EINVAL;
+}
+
+static inline void iommu_tlbiall(struct iommu_domain *domain)
+{
+}
+
+static inline int iommu_enable_config_clocks(struct iommu_domain *domain)
+{
+	return 0;
+}
+
+static inline void iommu_disable_config_clocks(struct iommu_domain *domain)
 {
 }
 

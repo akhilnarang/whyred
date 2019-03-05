@@ -549,6 +549,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			embedded devices based on command line input.
 			See Documentation/block/cmdline-partition.txt
 
+	boot_cpus=	[SMP]
+			Rather than attempting to online all possible CPUs at
+			boot time, only online the specified set of CPUs.
+
 	boot_delay=	Milliseconds to delay each printk during boot.
 			Values larger than 10 seconds (10000) are changed to
 			no delay (0).
@@ -745,6 +749,12 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	consoleblank=	[KNL] The console blank (screen saver) timeout in
 			seconds. Defaults to 10*60 = 10mins. A value of 0
 			disables the blank timer.
+
+	core_ctl_disable_cpumask= [SMP]
+			Exempt the CPUs from being managed by core_ctl.
+			core_ctl operates on a cluster basis. So all the
+			CPUs in a given cluster must be specified to disable
+			core_ctl for that cluster.
 
 	coredump_filter=
 			[KNL] Change the default value for
@@ -2744,6 +2754,11 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			we can turn it on.
 			on: enable the feature
 
+	page_poison=	[KNL] Boot-time parameter changing the state of
+			poisoning on the buddy allocator.
+			off: turn off poisoning
+			on: turn on poisoning
+
 	panic=		[KNL] Kernel behaviour on panic: delay <timeout>
 			timeout > 0: seconds before rebooting
 			timeout = 0: wait forever
@@ -4285,6 +4300,15 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			see Documentation/watchdog/watchdog-parameters.txt
 			or other driver-specific files in the
 			Documentation/watchdog/ directory.
+
+	workqueue.watchdog_thresh=
+			If CONFIG_WQ_WATCHDOG is configured, workqueue can
+			warn stall conditions and dump internal state to
+			help debugging.  0 disables workqueue stall
+			detection; otherwise, it's the stall threshold
+			duration in seconds.  The default value is 30 and
+			it can be updated at runtime by writing to the
+			corresponding sysfs file.
 
 	workqueue.disable_numa
 			By default, all work items queued to unbound
