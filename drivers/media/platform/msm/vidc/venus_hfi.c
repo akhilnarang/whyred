@@ -3654,7 +3654,6 @@ static int __response_handler(struct venus_hfi_device *device)
 					"Too many packets in message queue to handle at once, deferring read\n");
 			break;
 		}
-
 		/* do not read packets after sys error packet */
 		if (info->response_type == HAL_SYS_ERROR)
 			break;
