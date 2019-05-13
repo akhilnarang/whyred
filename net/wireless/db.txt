@@ -361,7 +361,7 @@ country EE: DFS-ETSI
 
 country EG: DFS-ETSI
 	(2402 - 2482 @ 40), (20)
-	(5170 - 5250 @ 40), (23)
+	(5170 - 5250 @ 40), (23), NO-OUTDOOR
 	(5250 - 5330 @ 40), (23), DFS
 
 country ES: DFS-ETSI
@@ -487,7 +487,7 @@ country GY:
 
 country HK: DFS-FCC
 	(2402 - 2482 @ 40), (20)
-	(5170 - 5250 @ 80), (24), AUTO-BW
+	(5170 - 5250 @ 80), (24), AUTO-BW, NO-OUTDOOR
 	(5250 - 5330 @ 80), (24), DFS, AUTO-BW
 	(5490 - 5730 @ 160), (24), DFS
 	(5735 - 5835 @ 80), (30)
@@ -1051,7 +1051,7 @@ country SE: DFS-ETSI
 
 country SG: DFS-FCC
 	(2402 - 2482 @ 40), (20)
-	(5170 - 5250 @ 80), (24), AUTO-BW
+	(5170 - 5250 @ 80), (24), AUTO-BW, NO-OUTDOOR
 	(5250 - 5330 @ 80), (24), DFS, AUTO-BW
 	(5490 - 5730 @ 160), (24), DFS
 	(5735 - 5835 @ 80), (30)
@@ -1147,7 +1147,8 @@ country TW: DFS-FCC
 	(2402 - 2472 @ 40), (30)
 	(5170 - 5250 @ 80), (24), AUTO-BW
 	(5250 - 5330 @ 80), (24), DFS, AUTO-BW
-	(5490 - 5730 @ 160), (24), DFS
+	(5490 - 5590 @ 80), (24), DFS
+	(5650 - 5730 @ 80), (24), DFS
 	(5735 - 5835 @ 80), (30)
 	# 60 gHz band channels 1-3, FCC
 	(57240 - 63720 @ 2160), (40)
@@ -1155,6 +1156,7 @@ country TW: DFS-FCC
 country TZ:
 	(2402 - 2482 @ 40), (20)
 	(5735 - 5835 @ 80), (30)
+
 
 # Source:
 # #914 / 06 Sep 2007: http://www.ucrf.gov.ua/uk/doc/nkrz/1196068874
@@ -1165,7 +1167,7 @@ country TZ:
 # disputable definitions there.
 country UA: DFS-ETSI
 	(2402 - 2482 @ 40), (20)
-	(5170 - 5250 @ 80), (20), AUTO-BW
+	(5170 - 5250 @ 80), (20), AUTO-BW, NO-OUTDOOR
 	(5250 - 5330 @ 80), (20), DFS, AUTO-BW
 	(5490 - 5670 @ 160), (20), DFS
 	(5735 - 5835 @ 80), (20)
