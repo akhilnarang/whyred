@@ -990,14 +990,6 @@ static void msm_pinctrl_resume(void)
 			log_base_wakeup_reason(irq);
 			pr_warn("%s: %d triggered %s\n", __func__, irq, name);
 
-			/*Add-begin-HMI_M6100_A01-60
-			**Comment:Logging kernel wakeup reson
-			*/
-
-			log_wakeup_reason(irq);
-
-			/*Add-end HMI_M6100_A01-60*/
-
 		}
 	}
 	spin_unlock_irqrestore(&pctrl->lock, flags);
