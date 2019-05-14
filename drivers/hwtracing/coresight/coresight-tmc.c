@@ -182,7 +182,7 @@ struct tmc_drvdata {
 	bool			aborting;
 	char			*buf;
 	dma_addr_t		paddr;
-	void __iomem		*vaddr;
+	void			*vaddr;
 	u32			size;
 	struct mutex		mem_lock;
 	u32			mem_size;
@@ -2025,9 +2025,9 @@ static struct amba_driver tmc_driver = {
 	.drv = {
 		.name   = "coresight-tmc",
 		.owner  = THIS_MODULE,
+		.suppress_bind_attrs = true,
 	},
 	.probe		= tmc_probe,
-	.remove		= tmc_remove,
 	.id_table	= tmc_ids,
 };
 

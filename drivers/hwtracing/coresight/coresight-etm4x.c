@@ -57,7 +57,8 @@ static void etm4_os_unlock(void *info)
 
 static bool etm4_arch_supported(u8 arch)
 {
-	switch (arch) {
+	/* Mask out the minor version number */
+	switch (arch & 0xf0) {
 	case ETM_ARCH_V4:
 		break;
 	default:
@@ -2240,7 +2241,7 @@ static ssize_t name##_show(struct device *_dev,				\
 	return scnprintf(buf, PAGE_SIZE, "0x%x\n",			\
 			 readl_relaxed(drvdata->base + offset));	\
 }									\
-DEVICE_ATTR_RO(name)
+static DEVICE_ATTR_RO(name)
 
 coresight_cross_read(trcoslsr, TRCOSLSR);
 coresight_cross_read(trcpdcr, TRCPDCR);
@@ -2897,9 +2898,9 @@ static struct amba_id etm4_ids[] = {
 static struct amba_driver etm4x_driver = {
 	.drv = {
 		.name   = "coresight-etm4x",
+		.suppress_bind_attrs = true,
 	},
 	.probe		= etm4_probe,
-	.remove		= etm4_remove,
 	.id_table	= etm4_ids,
 };
 
