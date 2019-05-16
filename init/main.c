@@ -493,6 +493,9 @@ static void __init mm_init(void)
 	kaiser_init();
 }
 
+int fpsensor = 1;
+bool is_poweroff_charge = false;
+
 asmlinkage __visible void __init start_kernel(void)
 {
 	char *command_line;
@@ -536,6 +539,8 @@ asmlinkage __visible void __init start_kernel(void)
 	pr_notice("Kernel command line: %s\n", boot_command_line);
 	/* parameters may set static keys */
 	jump_label_init();
+	fpsensor = strstr(boot_command_line,"androidboot.fpsensor=fpc") ? 1 : 2;
+	is_poweroff_charge = strstr(boot_command_line,"androidboot.mode=charger");
 	parse_early_param();
 	after_dashes = parse_args("Booting kernel",
 				  static_command_line, __start___param,
