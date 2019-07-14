@@ -1545,6 +1545,7 @@ void diag_dci_notify_client(int peripheral_mask, int data, int proc)
 					DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 						"diag: dci client with pid = %d Exited..\n",
 						entry->tgid);
+					put_pid(pid_struct);
 					mutex_unlock(&driver->dci_mutex);
 					return;
 				}
@@ -1559,9 +1560,12 @@ void diag_dci_notify_client(int peripheral_mask, int data, int proc)
 					if (stat)
 						pr_err("diag: Err sending dci signal to client, signal data: 0x%x, stat: %d\n",
 							info.si_int, stat);
-				} else
+				} else {
 					pr_err("diag: client data is corrupted, signal data: 0x%x, stat: %d\n",
 						info.si_int, stat);
+				}
+				put_task_struct(dci_task);
+				put_pid(pid_struct);
 			}
 		}
 	}
@@ -1943,7 +1947,9 @@ static int diag_process_dci_pkt_rsp(unsigned char *buf, int len)
 	if (!buf)
 		return -EIO;
 
-	if (len <= sizeof(struct dci_pkt_req_t) || len > DCI_REQ_BUF_SIZE) {
+	if (len <= (sizeof(struct dci_pkt_req_t) +
+		sizeof(struct diag_pkt_header_t)) ||
+		len > DCI_REQ_BUF_SIZE) {
 		pr_err("diag: dci: Invalid length %d len in %s", len, __func__);
 		return -EIO;
 	}
@@ -2066,9 +2072,9 @@ int diag_process_dci_transaction(unsigned char *buf, int len)
 	uint8_t *event_mask_ptr;
 	struct diag_dci_client_tbl *dci_entry = NULL;
 
-	if (!temp) {
-		pr_err("diag: Invalid buffer in %s\n", __func__);
-		return -ENOMEM;
+	if (!temp || len < sizeof(int)) {
+		pr_err("diag: Invalid input in %s\n", __func__);
+		return -EINVAL;
 	}
 
 	/* This is Pkt request/response transaction */
@@ -2123,7 +2129,7 @@ int diag_process_dci_transaction(unsigned char *buf, int len)
 		count = 0; /* iterator for extracting log codes */
 
 		while (count < num_codes) {
-			if (read_len >= USER_SPACE_DATA) {
+			if (read_len + sizeof(uint16_t) > len) {
 				pr_err("diag: dci: Invalid length for log type in %s",
 								__func__);
 				mutex_unlock(&driver->dci_mutex);
@@ -2236,7 +2242,7 @@ int diag_process_dci_transaction(unsigned char *buf, int len)
 		pr_debug("diag: head of dci event mask %pK\n", event_mask_ptr);
 		count = 0; /* iterator for extracting log codes */
 		while (count < num_codes) {
-			if (read_len >= USER_SPACE_DATA) {
+			if (read_len + sizeof(int) > len) {
 				pr_err("diag: dci: Invalid length for event type in %s",
 								__func__);
 				mutex_unlock(&driver->dci_mutex);
@@ -2313,11 +2319,18 @@ struct diag_dci_client_tbl *dci_lookup_client_entry_pid(int tgid)
 			DIAG_LOG(DIAG_DEBUG_DCI,
 				"diag: valid task doesn't exist for pid = %d\n",
 				entry->tgid);
+			put_pid(pid_struct);
 			continue;
 		}
-		if (task_s == entry->client)
-			if (entry->client->tgid == tgid)
+		if (task_s == entry->client) {
+			if (entry->client->tgid == tgid) {
+				put_task_struct(task_s);
+				put_pid(pid_struct);
 				return entry;
+			}
+		}
+		put_task_struct(task_s);
+		put_pid(pid_struct);
 	}
 	return NULL;
 }
@@ -2947,6 +2960,7 @@ int diag_dci_register_client(struct diag_dci_reg_tbl_t *reg_entry)
 
 	mutex_lock(&driver->dci_mutex);
 
+	get_task_struct(current);
 	new_entry->client = current;
 	new_entry->tgid = current->tgid;
 	new_entry->client_info.notification_list =
@@ -3093,6 +3107,9 @@ int diag_dci_deinit_client(struct diag_dci_client_tbl *entry)
 	if (!list_empty(&entry->track))
 		list_del(&entry->track);
 	driver->num_dci_client--;
+
+	put_task_struct(entry->client);
+	entry->client = NULL;
 	/*
 	 * Clear the client's log and event masks, update the cumulative
 	 * masks and send the masks to peripherals

@@ -742,7 +742,7 @@ ssize_t ipa_read(struct file *filp, char __user *buf, size_t count,
 				break;
 			}
 			if (copy_to_user(buf, &msg->meta,
-					  sizeof(struct ipa_msg_meta))) {
+					sizeof(struct ipa_msg_meta))) {
 				kfree(msg);
 				msg = NULL;
 				ret = -EFAULT;

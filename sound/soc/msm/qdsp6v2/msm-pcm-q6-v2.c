@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -384,6 +384,17 @@ static int msm_pcm_playback_prepare(struct snd_pcm_substream *substream)
 			prtd->audio_client = NULL;
 			return -ENOMEM;
 		}
+	} else if (pdata->avs_ver &&
+			(q6core_get_avs_version() == Q6_SUBSYS_AVS2_7)) {
+		ret = q6asm_open_write_v3(prtd->audio_client,
+				FORMAT_LINEAR_PCM, bits_per_sample);
+		if (ret < 0) {
+			pr_err("%s: q6asm_open_write_v3 failed (%d)\n",
+			__func__, ret);
+			q6asm_audio_client_free(prtd->audio_client);
+			prtd->audio_client = NULL;
+			return -ENOMEM;
+		}
 	} else {
 		ret = q6asm_open_write_with_retry(prtd->audio_client,
 				fmt_type, bits_per_sample);
@@ -433,6 +444,14 @@ static int msm_pcm_playback_prepare(struct snd_pcm_substream *substream)
 				prtd->channel_map, bits_per_sample,
 				sample_word_size, ASM_LITTLE_ENDIAN,
 				DEFAULT_QF);
+		else if (pdata->avs_ver &&
+				(q6core_get_avs_version() ==
+					Q6_SUBSYS_AVS2_7))
+			ret = q6asm_media_format_block_multi_ch_pcm_v3(
+				prtd->audio_client, runtime->rate,
+				runtime->channels, !prtd->set_channel_map,
+				prtd->channel_map, bits_per_sample,
+				sample_word_size);
 		else
 			ret = q6asm_media_format_block_multi_ch_pcm_v4(
 				prtd->audio_client, runtime->rate,
@@ -497,8 +516,13 @@ static int msm_pcm_capture_prepare(struct snd_pcm_substream *substream)
 		pr_debug("%s Opening %d-ch PCM read stream, perf_mode %d\n",
 				__func__, params_channels(params),
 				prtd->audio_client->perf_mode);
-
-		ret = q6asm_open_read_with_retry(prtd->audio_client,
+		if (pdata->avs_ver &&
+			(q6core_get_avs_version() == Q6_SUBSYS_AVS2_7))
+			ret = q6asm_open_read_v3(prtd->audio_client,
+					FORMAT_LINEAR_PCM,
+					bits_per_sample);
+		else
+			ret = q6asm_open_read_with_retry(prtd->audio_client,
 					FORMAT_LINEAR_PCM,
 					bits_per_sample, false);
 		if (ret < 0) {
@@ -577,6 +601,15 @@ static int msm_pcm_capture_prepare(struct snd_pcm_substream *substream)
 					sample_word_size,
 					ASM_LITTLE_ENDIAN,
 					DEFAULT_QF);
+	else if (pdata->avs_ver &&
+			(q6core_get_avs_version() ==
+				Q6_SUBSYS_AVS2_7))
+		ret = q6asm_enc_cfg_blk_pcm_format_support_v3(
+					prtd->audio_client,
+					prtd->samp_rate,
+					prtd->channel_mode,
+					bits_per_sample,
+					sample_word_size);
 	else
 		ret = q6asm_enc_cfg_blk_pcm_format_support_v4(
 					prtd->audio_client,
@@ -641,8 +674,15 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_soc_pcm_runtime *soc_prtd = substream->private_data;
 	struct msm_audio *prtd;
+	struct msm_plat_data *pdata;
 	int ret = 0;
 
+	pdata = (struct msm_plat_data *)
+		dev_get_drvdata(soc_prtd->platform->dev);
+	if (!pdata) {
+		pr_err("%s: platform data not populated\n", __func__);
+		return -EINVAL;
+	}
 	prtd = kzalloc(sizeof(struct msm_audio), GFP_KERNEL);
 	if (prtd == NULL) {
 		pr_err("Failed to allocate memory for msm_audio\n");
@@ -722,6 +762,10 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 	prtd->reset_event = false;
 	runtime->private_data = prtd;
 	msm_adsp_init_mixer_ctl_pp_event_queue(soc_prtd);
+	/* Vote to update the Rx thread priority to RT Thread for playback */
+	if ((substream->stream == SNDRV_PCM_STREAM_PLAYBACK) &&
+	    (pdata->perf_mode == LOW_LATENCY_PCM_MODE))
+		apr_start_rx_rt(prtd->audio_client->apr);
 
 	return 0;
 }
@@ -829,6 +873,7 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_soc_pcm_runtime *soc_prtd = substream->private_data;
 	struct msm_audio *prtd = runtime->private_data;
+	struct msm_plat_data *pdata;
 	uint32_t timeout;
 	int dir = 0;
 	int ret = 0;
@@ -838,6 +883,16 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 	if (prtd->audio_client) {
 		dir = IN;
 
+		/*
+		 * Unvote to downgrade the Rx thread priority from
+		 * RT Thread for Low-Latency use case.
+		 */
+		pdata = (struct msm_plat_data *)
+			dev_get_drvdata(soc_prtd->platform->dev);
+		if (pdata) {
+			if (pdata->perf_mode == LOW_LATENCY_PCM_MODE)
+				apr_end_rx_rt(prtd->audio_client->apr);
+		}
 		/* determine timeout length */
 		if (runtime->frame_bits == 0 || runtime->rate == 0) {
 			timeout = CMD_EOS_MIN_TIMEOUT_LENGTH;
@@ -3025,6 +3080,14 @@ static int msm_pcm_probe(struct platform_device *pdev)
 	} else {
 		pdata->perf_mode = LEGACY_PCM_MODE;
 	}
+
+	if (of_property_read_bool(pdev->dev.of_node,
+				"qcom,avs-version"))
+		pdata->avs_ver = true;
+	else
+		pdata->avs_ver = false;
+
+	pr_debug("%s: avs_ver = %d\n", __func__, pdata->avs_ver);
 
 	dev_set_drvdata(&pdev->dev, pdata);
 
