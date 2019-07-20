@@ -2898,9 +2898,9 @@ static struct amba_id etm4_ids[] = {
 static struct amba_driver etm4x_driver = {
 	.drv = {
 		.name   = "coresight-etm4x",
-		.suppress_bind_attrs = true,
 	},
 	.probe		= etm4_probe,
+	.remove		= etm4_remove,
 	.id_table	= etm4_ids,
 };
 
