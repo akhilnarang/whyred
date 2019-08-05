@@ -144,7 +144,7 @@ do_gc:
 			gc_set_wakelock(sbi, gc_th, false);
 			sbi->gc_mode = GC_NORMAL;
 			f2fs_warn(sbi, "No more GC victim found, "
-				"sleeping for %u ms", wait_ms);
+			 "sleeping for %u ms", wait_ms);
 
 			/*
 			 * Rapid GC would have cleaned hundreds of segments
